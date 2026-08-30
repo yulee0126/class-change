@@ -11,8 +11,9 @@ from . import roc, styles
 from .builder import ClassSlip, TeacherSlip, build
 from .models import Event
 from .styles import (
-    BOTTOM_ONLY, CENTER, CENTER_WRAP, DATA_ROW_H, DATE_FMT, LEFT, LEFT_WRAP,
-    NOTE_ALIGN, NOTE_ROW_H, RIGHT, TITLE_ROW_H, body_font, put, title_font,
+    BOTTOM_ONLY, CENTER, CENTER_WRAP, CLASS_ROW_H, DATE_FMT, LEFT, LEFT_WRAP,
+    NOTE_ALIGN, NOTE_ROW_H, RIGHT, TEACHER_ROW_H, TITLE_ROW_H, body_font, put,
+    title_font,
 )
 
 _SPACER = 1  # 每張通知單後空一列
@@ -71,7 +72,7 @@ def _teacher_slip(ws: Worksheet, r: int, slip: TeacherSlip, event: Event) -> int
 
     first_data = r
     for row in slip.rows:
-        ws.row_dimensions[r].height = DATA_ROW_H
+        ws.row_dimensions[r].height = TEACHER_ROW_H
         fill = styles.HIGHLIGHT_FILL if row.highlight else None
         put(ws, f"A{r}", row.klass, align=CENTER_WRAP, fill=fill)
         if row.new is not None:
@@ -137,7 +138,7 @@ def _class_slip(ws: Worksheet, r: int, slip: ClassSlip, event: Event) -> int:
 
     first_data = r
     for row in slip.rows:
-        ws.row_dimensions[r].height = DATA_ROW_H
+        ws.row_dimensions[r].height = CLASS_ROW_H
         fill = styles.HIGHLIGHT_FILL if getattr(row, "highlight", False) else None
         put(ws, f"B{r}", row.slot.date, align=CENTER, fmt=DATE_FMT, fill=fill)
         put(ws, f"C{r}", row.slot.weekday_cn, align=CENTER, fill=fill)

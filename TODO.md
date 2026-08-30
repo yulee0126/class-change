@@ -74,14 +74,17 @@
 - [ ] 「開啟檔案／開啟所在資料夾」按鈕
 - [ ] 日期改用 DatePicker（目前為文字，接受 `2026-08-25` 或 `115/8/25`）
 
-## P3 — 收尾
+## P3 — 收尾　🟡
 
-- [ ] `storage.py`：專案 `.json` 存讀；最近檔案清單
-- [ ] 主檔管理畫面：教師／班級／科目清單維護
-- [ ] 設定：預設總表路徑、標楷體 fallback、班級單預設樣式
-- [ ] 記住視窗大小／上次專案
-- [ ] `flet pack` 打包 Windows exe + icon
-- [ ] 使用說明（截圖）
+- [x] `storage.py`：專案 `.json` 存讀（`project_to/from_dict`）；`AppSettings`（`%APPDATA%\tiaoke\settings.json`）＋最近檔案清單
+- [x] 主檔管理：左側 `_MasterDataPanel`（教師／班級／科目 新增刪除）＋ controller `add/remove_master`
+- [x] 設定：預設總表路徑、記住視窗大小、上次專案；產生時自動記住總表路徑
+- [x] 左側「開啟／儲存／新專案」；腳新增時名稱自動進主檔
+- [x] `BUILD.md`：flet pack / PyInstaller 打包說明
+- [x] 測試：`test_storage.py`（專案 round-trip、settings、主檔）；全 39 測試通過
+- [ ] `assets/icon.ico` 待提供
+- [ ] 實機打包驗證（需 Windows + flet[all]）
+- [ ] 使用說明（截圖）＋ 視窗關閉事件存設定（目前 `window.on_close` 於此 flet 版本未保證觸發）
 
 ## P4 — 複合事件
 

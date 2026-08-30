@@ -323,7 +323,10 @@ python main.py
 
 > 於 flet 0.86.5 開發；GUI 視覺細節（欄寬、換行、捲動）需在桌面實機再微調。
 
-打包：`flet pack main.py --name 調課代課產生器 --icon assets/icon.ico`
+專案存讀：左側「專案檔」欄輸入 `.json` 路徑後按開啟／儲存。設定與最近檔案存於
+`%APPDATA%\tiaoke\settings.json`。
+
+打包成 exe：見 [BUILD.md](BUILD.md)。
 
 ---
 

@@ -10,7 +10,7 @@ import datetime
 import os
 from dataclasses import dataclass, field
 
-from .. import note_draft, output
+from .. import note_draft, output, storage
 from ..builder import ClassSlip, TeacherSlip, build, validate
 from ..models import (CLASS_SLIP_STYLES, LEAVE_TYPES, Event, Project, Slot,
                       SubLeg, SwapLeg)
@@ -43,8 +43,42 @@ class AppController:
     def __init__(self, project: Project | None = None) -> None:
         self.project = project or Project()
         self.current_index: int | None = None
+        self.project_path: str = ""
         if self.project.events:
             self.current_index = 0
+
+    # ---- 專案存讀 --------------------------------------------------
+    def new_project(self) -> None:
+        self.project = Project()
+        self.current_index = None
+        self.project_path = ""
+
+    def save_project(self, path: str) -> str:
+        self.project.merge_master_data()
+        storage.save_project(self.project, path)
+        self.project_path = storage._ensure_ext(path, ".json")
+        return self.project_path
+
+    def load_project(self, path: str) -> None:
+        self.project = storage.load_project(path)
+        self.project_path = path
+        self.current_index = 0 if self.project.events else None
+
+    # ---- 主檔維護 --------------------------------------------------
+    def add_master(self, kind: str, name: str) -> None:
+        name = name.strip()
+        if not name:
+            return
+        target = {"teacher": self.project.teachers, "class": self.project.classes,
+                  "subject": self.project.subjects}[kind]
+        if name not in target:
+            target.append(name)
+
+    def remove_master(self, kind: str, name: str) -> None:
+        target = {"teacher": self.project.teachers, "class": self.project.classes,
+                  "subject": self.project.subjects}[kind]
+        if name in target:
+            target.remove(name)
 
     # ---- 事件清單 ------------------------------------------------------
     @property

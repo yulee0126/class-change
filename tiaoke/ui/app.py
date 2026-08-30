@@ -12,6 +12,7 @@ import flet as ft
 
 from .. import roc
 from ..models import CLASS_SLIP_STYLES, LEAVE_TYPES
+from ..storage import AppSettings
 from .controller import DEFAULT_FORM_NO, AppController
 
 _STYLE_LABELS = {"banner": "橫幅式", "title": "標題式"}
@@ -19,33 +20,53 @@ _STYLE_LABELS = {"banner": "橫幅式", "title": "標題式"}
 
 def main(page: ft.Page) -> None:
     page.title = "調課代課通知單產生器"
-    page.window.width = 1180
-    page.window.height = 820
     AppView(page)
 
 
 class AppView:
     def __init__(self, page: ft.Page) -> None:
         self.page = page
+        self.settings = AppSettings.load()
         self.ctl = AppController()
+        if self.settings.default_master_path:
+            self.ctl.project.master_path = self.settings.default_master_path
+
+        try:
+            page.window.width = self.settings.window_width
+            page.window.height = self.settings.window_height
+            page.window.on_close = self._on_window_close
+        except Exception:
+            pass
+
         self.status = ft.Text("", color=ft.Colors.BLUE_GREY_700, selectable=True)
+        self.project_path = ft.TextField(label="專案檔（.json）", value=self.settings.last_project,
+                                         dense=True, expand=True)
 
         self.event_list = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, expand=True)
         self.editor = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
         self._leg_form: _LegForm | None = None
 
         left = ft.Container(
-            width=240,
+            width=260,
             content=ft.Column([
-                ft.Text("事件", weight=ft.FontWeight.BOLD),
+                ft.Text("專案", weight=ft.FontWeight.BOLD),
+                self.project_path,
                 ft.Row([
-                    ft.Button("新增", icon=ft.Icons.ADD, on_click=self._on_new),
+                    ft.IconButton(ft.Icons.FOLDER_OPEN, tooltip="開啟", on_click=self._on_open_project),
+                    ft.IconButton(ft.Icons.SAVE, tooltip="儲存", on_click=self._on_save_project),
+                    ft.IconButton(ft.Icons.NOTE_ADD, tooltip="新專案", on_click=self._on_new_project),
+                ]),
+                ft.Divider(),
+                ft.Row([
+                    ft.Text("事件", weight=ft.FontWeight.BOLD),
+                    ft.IconButton(ft.Icons.ADD, tooltip="新增", on_click=self._on_new),
                     ft.IconButton(ft.Icons.CONTENT_COPY, tooltip="複製", on_click=self._on_dup),
                     ft.IconButton(ft.Icons.DELETE, tooltip="刪除", on_click=self._on_del),
                 ]),
-                ft.Divider(),
                 self.event_list,
-            ], expand=True),
+                ft.Divider(),
+                _MasterDataPanel(self.ctl, self.refresh),
+            ], expand=True, scroll=ft.ScrollMode.AUTO),
         )
         page.add(
             ft.Row([left, ft.VerticalDivider(), self.editor], expand=True),
@@ -53,6 +74,53 @@ class AppView:
             self.status,
         )
         self.refresh()
+
+    # ---- 專案 ---------------------------------------------------
+    def _on_new_project(self, _e) -> None:
+        self.ctl.new_project()
+        self.project_path.value = ""
+        self._leg_form = None
+        self._set_status("已開新專案。")
+        self.refresh()
+
+    def _on_open_project(self, _e) -> None:
+        path = (self.project_path.value or "").strip()
+        try:
+            self.ctl.load_project(path)
+        except (OSError, ValueError) as exc:
+            self._set_status(f"開啟失敗：{exc}")
+            return
+        self.settings.note_recent(path)
+        self.settings.save()
+        self._leg_form = None
+        self._set_status(f"已開啟 {path}")
+        self.refresh()
+
+    def _on_save_project(self, _e) -> None:
+        path = (self.project_path.value or "").strip()
+        if not path:
+            self._set_status("請先在「專案檔」欄輸入要儲存的路徑。")
+            return
+        try:
+            saved = self.ctl.save_project(path)
+        except OSError as exc:
+            self._set_status(f"儲存失敗：{exc}")
+            return
+        self.project_path.value = saved
+        self.settings.note_recent(saved)
+        self.settings.save()
+        self._set_status(f"已儲存 {saved}")
+        self.refresh()
+
+    def _on_window_close(self, _e) -> None:
+        try:
+            self.settings.window_width = int(self.page.window.width)
+            self.settings.window_height = int(self.page.window.height)
+            if self.ctl.project.master_path:
+                self.settings.default_master_path = self.ctl.project.master_path
+            self.settings.save()
+        except Exception:
+            pass
 
     # ---- 重新繪製 --------------------------------------------------
     def refresh(self) -> None:
@@ -260,6 +328,9 @@ class AppView:
                 lines.append(f"✓ {'總表' if r.target == 'master' else '新檔'}：{r.path} {extra}")
             else:
                 lines.append(f"✗ {'總表' if r.target == 'master' else '新檔'}：{r.error}")
+        if self.ctl.project.master_path:
+            self.settings.default_master_path = self.ctl.project.master_path
+            self.settings.save()
         self._set_status("\n".join(lines))
         self.refresh()
 
@@ -336,3 +407,54 @@ class _LegForm(ft.Container):
             self.err.update()
             return
         self._on_submit(self.kind, data)
+
+
+class _MasterDataPanel(ft.Column):
+    """左側主檔維護：教師／班級／科目 清單。"""
+
+    _KINDS = [("teacher", "教師"), ("class", "班級"), ("subject", "科目")]
+
+    def __init__(self, ctl, on_change) -> None:
+        super().__init__(spacing=4, tight=True)
+        self.ctl = ctl
+        self.on_change = on_change
+        self.controls.append(ft.Text("主檔", weight=ft.FontWeight.BOLD))
+        self._bodies: dict[str, ft.Column] = {}
+        for kind, label in self._KINDS:
+            field = ft.TextField(label=f"新增{label}", dense=True, expand=True)
+            body = ft.Column(spacing=1, tight=True)
+            self._bodies[kind] = body
+            self.controls.append(ft.Row([
+                field,
+                ft.IconButton(ft.Icons.ADD_CIRCLE_OUTLINE,
+                              on_click=lambda e, k=kind, f=field: self._add(k, f)),
+            ]))
+            self.controls.append(body)
+        self._render()
+
+    def _lists(self, kind: str) -> list[str]:
+        return {"teacher": self.ctl.project.teachers,
+                "class": self.ctl.project.classes,
+                "subject": self.ctl.project.subjects}[kind]
+
+    def _render(self) -> None:
+        for kind, _ in self._KINDS:
+            body = self._bodies[kind]
+            body.controls.clear()
+            for name in self._lists(kind):
+                body.controls.append(ft.Row([
+                    ft.IconButton(ft.Icons.CLOSE, icon_size=14,
+                                  on_click=lambda e, k=kind, n=name: self._remove(k, n)),
+                    ft.Text(name, size=12),
+                ], tight=True))
+
+    def _add(self, kind: str, field: ft.TextField) -> None:
+        self.ctl.add_master(kind, field.value or "")
+        field.value = ""
+        self._render()
+        self.on_change()
+
+    def _remove(self, kind: str, name: str) -> None:
+        self.ctl.remove_master(kind, name)
+        self._render()
+        self.on_change()

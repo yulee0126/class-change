@@ -285,12 +285,35 @@ GUI 有 **一顆「產生通知單」按鈕**，上方有兩個可各自勾選�
 
 ---
 
-## 6. 安裝與執行（規劃）
+## 6. 安裝與執行
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install flet openpyxl
+pip install -r requirements.txt
+```
+
+### P1 核心（目前可用，無 GUI）
+
+```bash
+# 列出內建範例事件
+python -m tiaoke.cli --list
+
+# 產生單一事件的 Excel（另存新檔）
+python -m tiaoke.cli 瑞文1150223 -o out/瑞文1150223.xlsx
+
+# 寫入總表（同名工作表會刪除重建）
+python -m tiaoke.cli 炆明1150831 --master 115-1手動調代課-兼課.xlsx
+
+# 跑測試
+python -m pytest -q
+```
+
+> Windows 主控台若顯示亂碼，設 `set PYTHONUTF8=1` 後再執行（不影響產出的 Excel）。
+
+### P2 之後（GUI）
+
+```bash
 python main.py
 ```
 

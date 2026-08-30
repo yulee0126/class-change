@@ -4,74 +4,57 @@
 
 ---
 
-## P0 — 專案初始化
+## P0 — 專案初始化　✅
 
-- [ ] 建立 `requirements.txt`（flet、openpyxl）與 `.gitignore`（`.venv/`、`__pycache__/`、`~$*.xlsx`、`build/`、`dist/`）
-- [ ] 建立套件骨架 `tiaoke/`、`tiaoke/ui/`、`tests/`
-- [ ] 把範例檔的 8 個事件人工轉成測試 fixtures（`tests/fixtures/*.json`），作為 P1 回歸基準
-- [ ] 決定程式碼放這個 repo（`class-change`）；範例檔仍留在上層資料夾
+- [x] 建立 `requirements.txt` 與 `.gitignore`
+- [x] 建立套件骨架 `tiaoke/`、`tests/`（`tiaoke/ui/` 待 P2）
+- [x] 範例事件改以 `tiaoke/samples.py` 的 Python 物件表示（JSON fixtures 延到 P3 storage）
+- [x] 程式碼放 `class-change` repo；範例檔留在上層資料夾
 
-## P1 — 核心邏輯（無 GUI，先給 review）
+## P1 — 核心邏輯（無 GUI）　✅　等 review
 
-### models.py
-- [ ] `Slot`（date + period；`weekday_cn` 由 date 推算）
-- [ ] `SwapLeg` / `SubLeg`
-- [ ] `Event`（originator、leave_type、form_no、announce_date、sheet_date、note、class_slip_style、legs）
-  - `form_no`：單一自由文字（預設 `手動+`）
-  - `sheet_date`：分頁名稱用；GUI 由使用者選，預設＝所有腳最早日期
-- [ ] `Event.sheet_name` 屬性（`{末兩字}{民國YYYMMDD}`）
-- [ ] `Project`（events + 教師／班級／科目主檔）
-- [ ] `to_dict` / `from_dict`（給 storage 用）
+### models.py　✅
+- [x] `Slot`（date + period；`weekday_cn` 由 date 推算）
+- [x] `SwapLeg` / `SubLeg`
+- [x] `Event`（originator、leave_type、form_no、announce_date、sheet_date、note、class_slip_style、legs、sheet_name_override）
+- [x] `Event.sheet_name` / `effective_sheet_date` / `all_teachers` / `all_classes`
+- [x] `Project`（events + 教師／班級／科目主檔 + `merge_master_data`）
+- [x] `event_to_dict` / `event_from_dict` / `leg_*`（serialize，供 storage 與 fixtures）
 
-### roc.py
-- [ ] 西元 date → 民國年（int）
-- [ ] date → 星期中文（一…日）
-- [ ] date → `M月D日` 字串
-- [ ] 姓名 → 末兩字
-- [ ] 時段格式化：`8/31(一)第5節`、多節合併 `第5、6、7節`
+### roc.py　✅
+- [x] 民國年、星期中文、`announce_md`（補零）、`announce_line`、`slot_label`、`short_name`、`sheet_code`
 
-### builder.py
-- [ ] `TeacherRow` / `ClassRow` / `TeacherSlip` / `ClassSlip` 結構
-- [ ] `build(event) -> list[Slip]`：
-  - [ ] SwapLeg → 甲/乙教師單各 +1、班級單 +2
-  - [ ] SubLeg → 原/代教師單各 +1、班級單 +1
-  - [ ] 教師依首次出現順序保序；班級單排在教師單之後
-  - [ ] 同師／同班多腳累積列
-- [ ] 驗證：`slot_a != slot_b`、姓名去「老師」後綴、班級／科目非空、節次 1–10、重複腳偵測（warning）
+### builder.py　✅
+- [x] `TeacherRow` / `ClassRow` / `TeacherSlip` / `ClassSlip`
+- [x] `build()`：Swap → 教師單各 +1、班級單 +2；Sub → 教師單各 +1、班級單 +1
+- [x] 教師單保序；班級單排後；同師／同班多腳累積；列依時段排序
+- [x] `validate()`：必填、節次 1–10、`slot_a != slot_b`、同人、重複腳
 
-### note_draft.py
-- [ ] 對調腳依互換時段組彙整成「…課務互調」
-- [ ] 「故{發起人}老師{原時段}調至{新時段}上課」
-- [ ] 代課腳「{時段}由{代課老師}老師代課」
-- [ ] 對照 炆明1150831 / 若耶1150226 / 炆明1150223 三個範例調整措辭
+### note_draft.py　✅
+- [x] 對調時段組彙整「…課務互調」；代課「{時段}由{代課老師}老師代課」
+- [x] 對照 瑞文1150223 / 炆明1150831 / 代課範例 驗證措辭（見 test_note_draft）
+- [ ] （P4）補「故{發起人}老師…調至…上課」等更貼近原文的敘述
 
-### styles.py
-- [ ] 從範例檔擷取的樣式常數：欄寬、列高、字型、框線、number_format、頁面設定
-- [ ] helper：`set_cell(ws, coord, value, *, font, align, border, fmt)`、`box_range(...)`、`merge_and_set(...)`
+### styles.py　✅
+- [x] 樣式常數（欄寬、列高、字型、框線、`DATE_FMT`、頁面）
+- [x] helper：`put()`、`outline_grid()`、`box()`、`set_col_widths()`
 
-### xlsx_writer.py
-- [ ] `write_teacher_slip(ws, cursor, slip, event) -> new_cursor`
-- [ ] `write_class_slip(ws, cursor, slip, event) -> new_cursor`（橫幅式；標題式為分支）
-- [ ] `write_note_row(ws, cursor, text) -> new_cursor`
-- [ ] `write_announce_row(...)`：公告日期／`* 請學藝股長公佈。`
-- [ ] `write_sheet(wb, event)`：逐張輸出、張間空 1 列、設定欄寬／列印範圍／頁面
-- [ ] 被代課列 B/C/D 留空；代課者列 F/G/H 留空
+### xlsx_writer.py　✅
+- [x] `_teacher_slip` / `_class_slip`（banner + title 分支）/ `_maybe_note` / `_announce_row`
+- [x] `write_sheet()`：逐張輸出、張間空 1 列、欄寬／列印範圍／頁面（scale 95、A4 直向）
+- [x] 被代課列 B/C/D 留空；代課者列 F/G/H 留空
+- [~] 標頭多做了 `C:D`／`G:H` 合併（原檔未合併）＝刻意的視覺整理；如需完全一致再拿掉
 
-### output.py
-- [ ] `write_to_master(master_path, event)`：開啟 → 同名工作表存在則刪除 → 重建 → 存回
-- [ ] `save_as_new(dest_path, event)`：新活頁簿只放一張工作表
-- [ ] `run(event, *, to_master: bool, master_path, save_new: bool, dest_path) -> ResultSummary`
-  - [ ] 兩目標可同時；至少一個
-  - [ ] 回傳摘要：路徑、列數、是否覆蓋舊表、錯誤
+### output.py　✅
+- [x] `write_to_master`（同名工作表刪除重建）、`save_as_new`、`run(to_master, save_new 可同時)`
+- [x] `TargetResult` 摘要（路徑、列數、是否覆蓋、錯誤）；Excel 開啟中 → 友善訊息
 
-### tests
-- [ ] `test_roc.py`：民國年、星期、時段格式
-- [ ] `test_builder.py`：8 事件 → 通知單結構與備註文字比對
-- [ ] `test_xlsx_writer.py`：產表後與原檔逐格比對（值 + number_format + 合併儲存格 + 欄寬）
-  - [ ] 容許差異清單（範例本身不一致處，例如空白數、假單編號寫法）
+### tests　✅（24 passed）
+- [x] `test_roc.py` / `test_builder.py` / `test_note_draft.py` / `test_xlsx_writer.py`
+- [x] `瑞文1150223` 產出與原檔逐列比對（教師單、班級資料列完全對齊；標題式班級單完全一致）
 
-### 里程碑
-- [ ] **CLI 煙霧測試**：`python -m tiaoke.cli fixtures/瑞文1150223.json` → 產出 `.xlsx`，肉眼與範例比對 → 交付 review
+### 里程碑　✅
+- [x] CLI 煙霧測試：`python -m tiaoke.cli 瑞文1150223 -o out/x.xlsx`；肉眼比對通過 → **交付 review**
 
 ## P2 — Flet GUI
 

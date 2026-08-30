@@ -140,6 +140,7 @@ def update_record(folder: str, event: Event, timetable=None) -> RecordReport:
 
         _write_detail(wb, kept + new_rows)
         _rebuild_stats(wb)
+        _force_recalc(wb)
         wb.save(path)
 
         return RecordReport(
@@ -196,47 +197,95 @@ def _as_date(v) -> datetime.date | None:
     return None
 
 
-def _rebuild_stats(wb: Workbook) -> None:
-    detail = wb[DETAIL_SHEET]
-    agg: "OrderedDict[tuple, dict]" = OrderedDict()
+def stat_keys(detail_ws) -> "OrderedDict[tuple, dict]":
+    """掃「調代課明細」，回傳需要在月統計出現的 (月份, 教師) → {tid, 代課日期清單}。
+    堂數本身交給 Excel 公式算（改明細會即時更新），這裡只決定要列哪幾列。"""
+    out: "OrderedDict[tuple, dict]" = OrderedDict()
 
-    def bucket(month: str, teacher: str) -> dict:
+    def touch(month: str, teacher: str, tid: str) -> dict:
         key = (month, (teacher or "").strip())
-        return agg.setdefault(key, {"代課": 0, "被代": 0, "調課": 0, "tid": "", "dates": []})
+        b = out.setdefault(key, {"tid": "", "dates": []})
+        b["tid"] = b["tid"] or (tid or "")
+        return b
 
-    for r in detail.iter_rows(min_row=2, values_only=True):
+    for r in detail_ws.iter_rows(min_row=2, values_only=True):
         if not r or r[0] is None:
             continue
-        kind = r[5]
-        d = _as_date(r[6])
+        kind, d = r[5], _as_date(r[6])
         if d is None:
             continue
         month = month_code(d)
-        orig, orig_tid = r[11], r[12]
-        actual, actual_tid = r[13], r[14]
+        orig, orig_tid, actual, actual_tid = r[11], r[12], r[13], r[14]
         if kind == "代課":
-            b = bucket(month, actual)
-            b["代課"] += 1
-            b["tid"] = b["tid"] or (actual_tid or "")
-            b["dates"].append(d)
-            b2 = bucket(month, orig)
-            b2["被代"] += 1
-            b2["tid"] = b2["tid"] or (orig_tid or "")
+            touch(month, actual, actual_tid)["dates"].append(d)
+            touch(month, orig, orig_tid)
         elif kind == "調課":
-            b = bucket(month, actual)
-            b["調課"] += 1
-            b["tid"] = b["tid"] or (actual_tid or "")
+            touch(month, actual, actual_tid)
+
+    return OrderedDict((k, v) for k, v in out.items() if k[1])
+
+
+def _mc_ym(month_code_str: str) -> tuple[int, int]:
+    acad, m = month_code_str.split("-")
+    return int(acad) + 1911, int(m)
+
+
+def _rebuild_stats(wb: Workbook) -> None:
+    keys = stat_keys(wb[DETAIL_SHEET])
 
     if STATS_SHEET in wb.sheetnames:
         del wb[STATS_SHEET]
     ws = wb.create_sheet(STATS_SHEET)
     ws.append(STATS_HEADERS)
-    for (month, teacher), v in sorted(agg.items()):
-        if not teacher:
-            continue
+    q = f"'{DETAIL_SHEET}'"
+
+    for i, ((month, teacher), v) in enumerate(sorted(keys.items()), start=2):
+        y, m = _mc_ym(month)
+        ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+        span = (f"{q}!$G:$G,\">=\"&DATE({y},{m},1),"
+                f"{q}!$G:$G,\"<\"&DATE({ny},{nm},1)")
         cnt = Counter(f"{d.month}/{d.day}" for d in v["dates"])
-        detail_str = "、".join(f"{k}×{n}" if n > 1 else k for k, n in sorted(cnt.items()))
-        ws.append([month, teacher, v["tid"], v["代課"], v["被代"], v["調課"], detail_str])
+        dates_str = "、".join(f"{k}×{n}" if n > 1 else k for k, n in sorted(cnt.items()))
+        ws.append([
+            month, teacher, v["tid"],
+            f'=COUNTIFS({q}!$F:$F,"代課",{q}!$N:$N,$B{i},{span})',
+            f'=COUNTIFS({q}!$F:$F,"代課",{q}!$L:$L,$B{i},{span})',
+            f'=COUNTIFS({q}!$F:$F,"調課",{q}!$N:$N,$B{i},{span})',
+            dates_str,
+        ])
+
+    ws["I1"] = "堂數為公式，改「調代課明細」會自動更新；「代課日期明細」是產生當下的快照。"
+    ws["I1"].font = _hint_font()
     ws.freeze_panes = "A2"
-    for col, w in {"A": 9, "B": 10, "C": 10, "G": 24}.items():
+    for col, w in {"A": 9, "B": 10, "C": 10, "G": 22}.items():
         ws.column_dimensions[col].width = w
+
+
+def _hint_font():
+    from openpyxl.styles import Font
+    return Font(size=9, italic=True, color="808080")
+
+
+def _force_recalc(wb: Workbook) -> None:
+    try:
+        wb.calculation.fullCalcOnLoad = True
+    except Exception:
+        pass
+
+
+def rebuild_stats_file(path: str) -> RecordReport:
+    """只重算某個記錄檔的「月統計」（使用者手改明細後用）。"""
+    try:
+        if not os.path.exists(path):
+            return RecordReport(error=f"找不到記錄檔：{path}")
+        wb = load_workbook(path)
+        if DETAIL_SHEET not in wb.sheetnames:
+            return RecordReport(error="這個檔沒有「調代課明細」。")
+        _rebuild_stats(wb)
+        _force_recalc(wb)
+        wb.save(path)
+        return RecordReport(path=path)
+    except PermissionError:
+        return RecordReport(error="記錄檔可能正在 Excel 中開啟。")
+    except Exception as exc:  # noqa: BLE001
+        return RecordReport(error=str(exc))

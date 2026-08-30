@@ -58,12 +58,34 @@ def test_update_record_file_and_stats(tmp_path):
     detail = list(wb["調代課明細"].iter_rows(min_row=2, values_only=True))
     assert len(detail) == 10
 
-    stats = {(r[0], r[1]): r for r in wb["月統計"].iter_rows(min_row=2, values_only=True)}
-    # 郭惠茹 9/2 代課 2 堂
-    assert stats[("115-09", "郭惠茹")][3] == 2
-    # 劉炆明 被代：9 月 3 堂（9/2×3）＋ 8 月 1 堂（8/31 徐惠珠代）
-    assert stats[("115-09", "劉炆明")][4] == 3
-    assert stats[("115-08", "劉炆明")][4] == 1
+    # 月統計：哪幾列該出現（堂數本身是 Excel 公式）
+    keys = record.stat_keys(wb["調代課明細"])
+    assert ("115-09", "郭惠茹") in keys
+    assert ("115-09", "劉炆明") in keys
+    assert ("115-08", "劉炆明") in keys           # 8/31 那堂歸 8 月
+    assert keys[("115-09", "郭惠茹")]["dates"].count(datetime.date(2026, 9, 2)) == 2
+
+    stats = {(r[0].value, r[1].value): r for r in wb["月統計"].iter_rows(min_row=2)}
+    # 堂數欄是 COUNTIFS 公式
+    f = stats[("115-09", "郭惠茹")][3].value
+    assert f.startswith("=COUNTIFS(") and "代課" in f and "$B" in f
+    assert "DATE(2026,9,1)" in f and "DATE(2026,10,1)" in f
+
+
+def test_stat_keys_dates_are_actual_class_dates():
+    """月統計的『代課日期明細』依實際上課日歸月（不是公告日）。"""
+    from openpyxl import Workbook
+    wb = Workbook()
+    ev = samples.get("炆明1150831")   # 公告日 8/25，但代課發生在 8/31 與 9/2
+    record._write_detail(wb, record.event_to_rows(ev, ts="x"))
+    keys = record.stat_keys(wb["調代課明細"])
+
+    # 郭惠茹 9/2 代課 2 堂 → 9 月那列的 dates 有兩個 9/2
+    assert keys[("115-09", "郭惠茹")]["dates"] == [datetime.date(2026, 9, 2)] * 2
+    # 徐惠珠 8/31 代課 1 堂
+    assert keys[("115-08", "徐惠珠")]["dates"] == [datetime.date(2026, 8, 31)]
+    # 沒有任何一列的月份是公告月以外的錯月（都在 8 或 9 月）
+    assert {m.split("-")[1] for (m, _t) in keys} <= {"08", "09"}
 
 
 def test_regenerate_replaces_not_duplicates(tmp_path):

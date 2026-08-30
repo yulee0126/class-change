@@ -163,6 +163,15 @@ class AppController:
         """把所有事件匯出成一個 Excel（一事件一分頁）。"""
         return output.export_all(self.project.events, path)
 
+    def rebuild_record_stats(self) -> list[record.RecordReport]:
+        """重算記錄檔資料夾裡每個「{學期}調代課記錄.xlsx」的月統計。"""
+        import glob
+        out = []
+        if self.record_folder:
+            for p in sorted(glob.glob(os.path.join(self.record_folder, "*調代課記錄.xlsx"))):
+                out.append(record.rebuild_stats_file(p))
+        return out
+
     def load_project(self, path: str) -> None:
         self.project = storage.load_project(path)
         self.project_path = path

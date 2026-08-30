@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import datetime
 import os
 import re
@@ -18,10 +19,29 @@ _HINT = ft.Colors.BLUE_GREY_600
 _FIRST = datetime.date(2020, 1, 1)
 _LAST = datetime.date(2035, 12, 31)
 
+_ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets")
+
+
+def _asset(name: str) -> str:
+    return os.path.join(_ASSETS, name)
+
+
+def _logo_src() -> str | None:
+    try:
+        with open(_asset("logo64.png"), "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode("ascii")
+        return f"data:image/png;base64,{b64}"
+    except OSError:
+        return None
+
 
 def main(page: ft.Page) -> None:
     page.title = "調課代課通知單產生器"
     page.padding = 12
+    try:
+        page.window.icon = _asset("icon.ico")
+    except Exception:
+        pass
     AppView(page)
 
 
@@ -138,10 +158,16 @@ class AppView:
         self.editor = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
         self._leg_form: _LegForm | None = None
 
+        _logo = _logo_src()
+        _title_row = ft.Row(
+            ([ft.Image(src=_logo, width=26, height=26, border_radius=4)] if _logo else []) +
+            [ft.Text("調代課單", weight=ft.FontWeight.BOLD, size=16)],
+            spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
         left = ft.Container(
             width=250,
             content=ft.Column([
-                ft.Text("調代課單", weight=ft.FontWeight.BOLD, size=16),
+                _title_row,
                 _hint("一張單 = Excel 裡的一個分頁。\n一次調代課（含好幾筆對調／代課）做成一張。"),
                 ft.Row([
                     ft.Button("新增一張", icon=ft.Icons.ADD, on_click=self._on_new),
@@ -165,8 +191,11 @@ class AppView:
                                   on_click=self._on_export_all),
                         ft.Divider(),
                         _hint("每次產生 Excel 時，會把代課／調課明細同步寫進這個資料夾裡的\n"
-                              "「{學期}調代課記錄.xlsx」（每學期一個檔）。"),
+                              "「{學期}調代課記錄.xlsx」。月統計的堂數是公式，手改明細會自動更新；\n"
+                              "若手動新增了全新的老師，按下面按鈕重算一次。"),
                         self.record_folder,
+                        ft.Button("重算記錄檔月統計", icon=ft.Icons.CALCULATE,
+                                  on_click=self._on_rebuild_stats),
                         ft.Divider(),
                         _TimetableImport(self.ctl, self.settings, self._on_tt_changed),
                         ft.Divider(),
@@ -556,6 +585,15 @@ class AppView:
         self.ctl.record_folder = folder
         self.settings.record_folder = folder
         self.settings.save()
+
+    def _on_rebuild_stats(self, _e) -> None:
+        reports = self.ctl.rebuild_record_stats()
+        if not reports:
+            self._set_status("記錄檔資料夾裡沒有找到「…調代課記錄.xlsx」。")
+            return
+        lines = [f"✓ {r.path}" if r.ok else f"✗ {r.error}" for r in reports]
+        self._show_dialog("已重算月統計", lines)
+        self._set_status("　｜　".join(lines))
 
     def _on_export_all(self, _e) -> None:
         path = (self.project_path.value or "").strip()

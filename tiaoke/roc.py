@@ -33,6 +33,23 @@ def slot_label(d: datetime.date, period: int) -> str:
     return f"{d.month}/{d.day}({weekday_cn(d)})第{period}節"
 
 
+def parse_date(text: str) -> datetime.date:
+    """接受 '2026-02-23'、'2026/2/23'、'115/2/23'（民國）、'115.02.23'。"""
+    raw = text.strip().replace(".", "/").replace("-", "/").replace(" ", "")
+    parts = [p for p in raw.split("/") if p]
+    if len(parts) != 3:
+        raise ValueError(f"無法解析日期：{text!r}")
+    y, m, d = (int(p) for p in parts)
+    if y < 1911:  # 視為民國年
+        y += 1911
+    return datetime.date(y, m, d)
+
+
+def format_date_input(d: datetime.date) -> str:
+    """回填到輸入框用的標準格式。"""
+    return d.isoformat()
+
+
 def short_name(name: str) -> str:
     """取姓名末兩字作為簡稱：'余瑞文' → '瑞文'。"""
     name = name.strip()

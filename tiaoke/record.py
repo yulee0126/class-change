@@ -25,7 +25,8 @@ DETAIL_HEADERS = [
     "節次", "班級", "授課科目", "原教師", "原教師編號", "實際授課教師", "實際教師編號",
     "型態", "公告日期", "代課別", "鐘點費", "備註",
 ]
-STATS_HEADERS = ["月份", "教師", "教師編號", "代課堂數", "被代堂數", "調課堂數", "代課日期明細"]
+STATS_HEADERS = ["月份", "教師", "教師編號", "代課堂數", "被代堂數", "調課堂數",
+                 "代課日期（民國）"]
 
 _DATE_FMT = "yyyy/mm/dd"
 
@@ -66,6 +67,10 @@ def semester_code(d: datetime.date) -> str:
 
 def month_code(d: datetime.date) -> str:
     return f"{d.year - 1911}-{d.month:02d}"
+
+
+def _roc_ymd(d: datetime.date) -> str:
+    return f"{d.year - 1911}-{d.month:02d}-{d.day:02d}"
 
 
 def record_path(folder: str, ref_date: datetime.date) -> str:
@@ -244,7 +249,7 @@ def _rebuild_stats(wb: Workbook) -> None:
         ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
         span = (f"{q}!$G:$G,\">=\"&DATE({y},{m},1),"
                 f"{q}!$G:$G,\"<\"&DATE({ny},{nm},1)")
-        cnt = Counter(f"{d.month}/{d.day}" for d in v["dates"])
+        cnt = Counter(_roc_ymd(d) for d in v["dates"])
         dates_str = "、".join(f"{k}×{n}" if n > 1 else k for k, n in sorted(cnt.items()))
         ws.append([
             month, teacher, v["tid"],
@@ -254,7 +259,7 @@ def _rebuild_stats(wb: Workbook) -> None:
             dates_str,
         ])
 
-    ws["I1"] = "堂數為公式，改「調代課明細」會自動更新；「代課日期明細」是產生當下的快照。"
+    ws["I1"] = "堂數為公式，改「調代課明細」會自動更新；「代課日期（民國）」是產生當下的快照。"
     ws["I1"].font = _hint_font()
     ws.freeze_panes = "A2"
     for col, w in {"A": 9, "B": 10, "C": 10, "G": 22}.items():

@@ -265,14 +265,14 @@ class AppView:
 
         # 假別：常用選項 + 可自訂
         custom_leave = "" if ev.leave_type in LEAVE_TYPES else ev.leave_type
-        rg_leave = ft.RadioGroup(
+        self._rg_leave = ft.RadioGroup(
             value=ev.leave_type if ev.leave_type in LEAVE_TYPES else None,
             content=ft.Row([ft.Radio(value=x, label=x) for x in LEAVE_TYPES], wrap=True),
-            on_change=lambda e: self._set_leave(e.control.value))
-        tf_leave = ft.TextField(label="或自行輸入假別", width=200, value=custom_leave, dense=True,
-                                on_change=lambda e: self._set_leave(e.control.value, custom=True))
-        self.editor.controls.append(ft.Row([ft.Text("假別："), rg_leave], wrap=True))
-        self.editor.controls.append(ft.Row([tf_leave]))
+            on_change=self._on_leave_radio)
+        self._tf_leave = ft.TextField(label="或自行輸入假別", width=200, value=custom_leave,
+                                      dense=True, on_change=self._on_leave_custom)
+        self.editor.controls.append(ft.Row([ft.Text("假別："), self._rg_leave], wrap=True))
+        self.editor.controls.append(ft.Row([self._tf_leave]))
 
         self._sheet_date = _DateField(self.page, "分頁日期（可空）", ev.sheet_date,
                                       on_change=self._pull_sheet_date, width=150)
@@ -398,13 +398,24 @@ class AppView:
         self._render_event_list()
         self.page.update()
 
-    def _set_leave(self, value: str, custom: bool = False) -> None:
-        value = (value or "").strip()
+    def _on_leave_radio(self, e) -> None:
+        value = (e.control.value or "").strip()
         if not value:
             return
         self.ctl.update_event_fields(leave_type=value)
-        if custom:
-            self.refresh()  # 讓 radio 取消選取
+        # 選了常用選項就清掉自訂欄
+        self._tf_leave.value = ""
+        _safe_update(self._tf_leave)
+
+    def _on_leave_custom(self, e) -> None:
+        text = (e.control.value or "").strip()
+        if not text:
+            return
+        self.ctl.update_event_fields(leave_type=text)
+        # 取消常用選項的選取（不重繪整頁，避免打字時失焦）
+        if self._rg_leave.value is not None:
+            self._rg_leave.value = None
+            _safe_update(self._rg_leave)
 
     def _pull_ann_date(self) -> None:
         try:

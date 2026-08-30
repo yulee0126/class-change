@@ -44,8 +44,42 @@ class AppController:
         self.project = project or Project()
         self.current_index: int | None = None
         self.project_path: str = ""
+        self.timetable = None          # tiaoke.timetable.Timetable | None
+        self._pending_tt = None
         if self.project.events:
             self.current_index = 0
+
+    # ---- 課表 ----------------------------------------------------
+    def parse_timetable_pdf(self, pdf_path: str):
+        """讀 PDF，暫存解析結果（尚未套用），回傳 Timetable 供顯示摘要。"""
+        from .. import timetable as _tt
+        self._pending_tt = _tt.parse_pdf(pdf_path)
+        return self._pending_tt
+
+    def apply_pending_timetable(self, save_path: str | None = None) -> str | None:
+        """套用剛解析的課表；save_path 有給就順便存 JSON，回傳實際存檔路徑。"""
+        if self._pending_tt is None:
+            return None
+        self.timetable = self._pending_tt
+        self._pending_tt = None
+        if save_path:
+            return storage.save_timetable(self.timetable, save_path)
+        return None
+
+    def load_timetable(self, path: str) -> None:
+        self.timetable = storage.load_timetable(path)
+
+    def timetable_slots(self, teacher: str, date: datetime.date | None):
+        """某老師在某日期（換算星期）的課表 slot 清單。"""
+        if not self.timetable or not teacher or date is None:
+            return []
+        wd = date.weekday() + 1
+        if wd > 5:
+            return []
+        return self.timetable.slots_for(teacher.strip(), wd)
+
+    def timetable_teacher_names(self) -> list[str]:
+        return self.timetable.teacher_names() if self.timetable else []
 
     # ---- 專案存讀 --------------------------------------------------
     def new_project(self) -> None:

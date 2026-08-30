@@ -76,6 +76,23 @@
 - [ ] 「開啟產生的檔案／資料夾」按鈕
 - [ ] 實機視覺再微調
 
+## P5 — 匯入教師課表（PDF）　🟢
+
+- [x] `tiaoke/timetable.py`：解析教師課表 PDF（pdfplumber）
+  - 一頁一師；抓 學校／學年期／生效日期／各節時間／教師姓名+編號+職稱
+  - 每格：科目（可跨行合併）／授課班級（合班課→多列）／上課地點
+  - 兩遍解析：先掃全 PDF 建班級・教室詞彙表，再據以切格
+  - 領域：此 PDF 無 → 欄位保留空字串
+  - 實測：90 師、1303 筆課，僅 5 筆無班級（體育／花卉利用與設計）
+- [x] `Timetable` to_dict/from_dict；`storage.save_timetable/load_timetable`；`AppSettings.timetable_path`
+- [x] controller：`parse_timetable_pdf` → `apply_pending_timetable(save_path?)`（先解析、問使用者再存）／`load_timetable`／`timetable_slots(teacher, date)`
+- [x] GUI 左欄進階：`_TimetableImport`（PDF 路徑 → 讀取 → 「存檔並套用／只套用不存／取消」）
+- [x] 啟動時若 settings 有課表路徑就自動載入
+- [x] `_LegForm`：填了老師＋日期 → 列出該老師當天課表的課，點一下帶入 科目／班級／節次（例外仍可手填）
+- [x] `test_timetable.py`（含實體 PDF 測試）；全 55 測試通過
+- [ ] 課表「瀏覽」選檔對話框
+- [ ] 蔡文華「呼嚕呼嚕…」這類超長選修課名在 PDF 被截斷（極少數）
+
 ## P3 — 收尾　🟡
 
 - [x] `storage.py`：專案 `.json` 存讀（`project_to/from_dict`）；`AppSettings`（`%APPDATA%\tiaoke\settings.json`）＋最近檔案清單

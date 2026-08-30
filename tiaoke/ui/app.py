@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import os
 
 import flet as ft
 
@@ -85,6 +86,11 @@ class AppView:
         self.ctl = AppController()
         if self.settings.default_master_path:
             self.ctl.project.master_path = self.settings.default_master_path
+        if self.settings.timetable_path and os.path.exists(self.settings.timetable_path):
+            try:
+                self.ctl.load_timetable(self.settings.timetable_path)
+            except Exception:
+                pass
 
         try:
             page.window.width = self.settings.window_width
@@ -125,6 +131,8 @@ class AppView:
                         ]),
                         ft.Button("只匯出全部成一個 Excel", icon=ft.Icons.TABLE_VIEW,
                                   on_click=self._on_export_all),
+                        ft.Divider(),
+                        _TimetableImport(self.ctl, self.settings, self._on_tt_changed),
                         ft.Divider(),
                         _hint("常用的老師／班級／科目，打過就記著（目前僅記錄）。"),
                         _MasterDataPanel(self.ctl, self.refresh),
@@ -371,7 +379,7 @@ class AppView:
             kind = initial["kind"]
         self._leg_form = _LegForm(
             self.page, kind, self._submit_leg, self._cancel_leg,
-            originator=self.ctl.current.originator,
+            originator=self.ctl.current.originator, ctl=self.ctl,
             initial=initial, edit_index=edit_index)
         self.refresh()
 
@@ -458,6 +466,10 @@ class AppView:
         self._set_status(msg)
         self.refresh()
 
+    def _on_tt_changed(self, msg: str) -> None:
+        self._set_status(msg)
+        self.refresh()
+
     def _on_export_all(self, _e) -> None:
         path = (self.project_path.value or "").strip()
         if not path:
@@ -511,33 +523,41 @@ def _guide_card() -> ft.Control:
 
 
 class _LegForm(ft.Container):
-    """新增／修改一筆調課或代課的內嵌表單。"""
+    """新增／修改一筆調課或代課的內嵌表單。填了老師＋日期後，會列出該老師課表的課供一鍵帶入。"""
 
     def __init__(self, page, kind: str, on_submit, on_cancel, *,
-                 originator: str = "", initial: dict | None = None,
+                 originator: str = "", ctl=None, initial: dict | None = None,
                  edit_index: int | None = None) -> None:
         super().__init__(bgcolor=ft.Colors.BLUE_GREY_50, padding=12, border_radius=8)
         self.kind = kind
         self.edit_index = edit_index
+        self.ctl = ctl
         self._on_submit = on_submit
         self._on_cancel = on_cancel
         ini = initial or {}
         today = datetime.date.today()
         editing = edit_index is not None
 
-        def tf(label, w=120, value=""):
-            return ft.TextField(label=label, width=w, value=str(value or ""), dense=True)
+        def tf(label, w=120, value="", on_change=None):
+            return ft.TextField(label=label, width=w, value=str(value or ""),
+                                dense=True, on_change=on_change)
 
         self.klass = tf("班級", 110, ini.get("klass"))
+        self.pick_a = ft.Column(spacing=2, tight=True)
+        self.pick_b = ft.Column(spacing=2, tight=True)
 
         if kind == "swap":
-            self.ta = tf("甲老師", 110, ini.get("teacher_a") or originator)
+            self.ta = tf("甲老師", 110, ini.get("teacher_a") or originator,
+                         on_change=lambda e: self._sync())
             self.sa = tf("甲的科目", 130, ini.get("subject_a"))
-            self.da = _DateField(page, "甲原本日期", ini.get("date_a") or today, width=130)
+            self.da = _DateField(page, "甲原本日期", ini.get("date_a") or today, width=130,
+                                 on_change=self._sync)
             self.pa = _period_dd(ini.get("period_a"))
-            self.tb = tf("乙老師", 110, ini.get("teacher_b"))
+            self.tb = tf("乙老師", 110, ini.get("teacher_b"),
+                         on_change=lambda e: self._sync())
             self.sb = tf("乙的科目", 130, ini.get("subject_b"))
-            self.db = _DateField(page, "乙原本日期", ini.get("date_b") or today, width=130)
+            self.db = _DateField(page, "乙原本日期", ini.get("date_b") or today, width=130,
+                                 on_change=self._sync)
             self.pb = _period_dd(ini.get("period_b"))
             body = [
                 ft.Text(("修改" if editing else "新增") + "調課", weight=ft.FontWeight.BOLD),
@@ -546,13 +566,17 @@ class _LegForm(ft.Container):
                 ft.Row([self.klass], wrap=True),
                 ft.Text("甲方（原時段）", size=12, color=_HINT),
                 ft.Row([self.ta, self.sa, self.da.control, self.pa], wrap=True),
+                self.pick_a,
                 ft.Text("乙方（原時段）", size=12, color=_HINT),
                 ft.Row([self.tb, self.sb, self.db.control, self.pb], wrap=True),
+                self.pick_b,
             ]
         else:
-            self.ot = tf("原老師", 110, ini.get("orig_teacher") or originator)
+            self.ot = tf("原老師", 110, ini.get("orig_teacher") or originator,
+                         on_change=lambda e: self._sync())
             self.subj = tf("科目", 130, ini.get("subject"))
-            self.dd = _DateField(page, "日期", ini.get("date") or today, width=130)
+            self.dd = _DateField(page, "日期", ini.get("date") or today, width=130,
+                                 on_change=self._sync)
             self.pp = _period_dd(ini.get("period"))
             self.st = tf("代課老師", 110, ini.get("sub_teacher"))
             self.from_swap = ft.Checkbox(
@@ -562,6 +586,7 @@ class _LegForm(ft.Container):
                 ft.Text(("修改" if editing else "新增") + "代課", weight=ft.FontWeight.BOLD),
                 _hint("某位老師某一節不能上，找人代，時間不變。"),
                 ft.Row([self.klass, self.ot, self.subj, self.dd.control, self.pp, self.st], wrap=True),
+                self.pick_a,
                 self.from_swap,
             ]
 
@@ -572,6 +597,52 @@ class _LegForm(ft.Container):
             ft.TextButton("取消", on_click=lambda e: self._on_cancel()),
         ]))
         self.content = ft.Column(body, spacing=8, tight=True)
+        self._fill_picks()
+
+    # ---- 課表帶入 ----
+    def _sync(self, *_a) -> None:
+        self._fill_picks()
+        try:
+            self.update()
+        except Exception:
+            pass
+
+    def _fill_picks(self) -> None:
+        if self.kind == "swap":
+            self.pick_a.controls = self._pick_ctrls(self.ta.value, self.da, "a")
+            self.pick_b.controls = self._pick_ctrls(self.tb.value, self.db, "b")
+        else:
+            self.pick_a.controls = self._pick_ctrls(self.ot.value, self.dd, "s")
+
+    def _pick_ctrls(self, teacher, datefield, side) -> list:
+        if self.ctl is None or not (teacher or "").strip():
+            return []
+        try:
+            d = datefield.get()
+        except ValueError:
+            d = None
+        slots = self.ctl.timetable_slots(teacher, d)
+        if not slots:
+            return []
+        wd = "一二三四五"[d.weekday()]
+        row = ft.Row(wrap=True, spacing=4, run_spacing=2)
+        for s in slots:
+            label = f"第{s.period}節 {s.subject}" + (f"／{s.klass}" if s.klass else "")
+            row.controls.append(ft.OutlinedButton(
+                label, on_click=lambda e, s=s, side=side: self._apply_slot(side, s)))
+        return [ft.Text(f"{teacher} 星期{wd} 的課（點一下帶入）：", size=11, color=_HINT), row]
+
+    def _apply_slot(self, side, s) -> None:
+        if self.kind == "swap":
+            if side == "a":
+                self.sa.value, self.pa.value = s.subject, str(s.period)
+            else:
+                self.sb.value, self.pb.value = s.subject, str(s.period)
+        else:
+            self.subj.value, self.pp.value = s.subject, str(s.period)
+        if s.klass:
+            self.klass.value = s.klass
+        self._sync()
 
     def _submit(self, _e) -> None:
         try:
@@ -660,3 +731,93 @@ class _MasterDataPanel(ft.Column):
         self.ctl.remove_master(kind, name)
         self._render()
         self.on_change()
+
+
+class _TimetableImport(ft.Column):
+    """匯入教師課表 PDF → 解析 → 問要不要存 JSON。"""
+
+    def __init__(self, ctl, settings, on_changed) -> None:
+        super().__init__(spacing=4, tight=True)
+        self.ctl = ctl
+        self.settings = settings
+        self.on_changed = on_changed
+        self.pdf_path = ft.TextField(hint_text="教師課表 PDF 路徑", dense=True, expand=True)
+        self.status = ft.Text("", size=11, color=_HINT)
+        self.confirm = ft.Column(spacing=4, tight=True, visible=False)
+        self.controls = [
+            ft.Text("匯入課表", weight=ft.FontWeight.BOLD),
+            _hint("讀教師課表 PDF → 填調課／代課時，該老師的課可一鍵帶入。"),
+            ft.Row([self.pdf_path,
+                    ft.IconButton(ft.Icons.UPLOAD_FILE, tooltip="讀取", on_click=self._read)]),
+            self.status,
+            self.confirm,
+        ]
+        self._refresh()
+
+    def _refresh(self) -> None:
+        tt = self.ctl.timetable
+        if tt:
+            m = sum(len(t.slots) for t in tt.teachers.values())
+            where = self.settings.timetable_path or "（未存檔，關掉就沒了）"
+            self.status.value = f"目前課表：{len(tt.teachers)} 位老師、{m} 筆課\n{where}"
+        else:
+            self.status.value = "尚未匯入課表"
+
+    def _read(self, _e) -> None:
+        path = (self.pdf_path.value or "").strip()
+        if not path:
+            self.status.value = "請先填 PDF 路徑"
+            self.update()
+            return
+        self.status.value = "讀取中…"
+        self.update()
+        try:
+            tt = self.ctl.parse_timetable_pdf(path)
+        except Exception as exc:  # noqa: BLE001
+            self.status.value = f"讀取失敗：{exc}"
+            self.update()
+            return
+        m = sum(len(t.slots) for t in tt.teachers.values())
+        self._json = ft.TextField(label="存成", dense=True, expand=True,
+                                  value=os.path.splitext(path)[0] + ".json")
+        self.confirm.controls = [
+            ft.Text(f"讀到 {len(tt.teachers)} 位老師、{m} 筆課。要存成 JSON 保存嗎？"),
+            self._json,
+            ft.Row([
+                ft.Button("存檔並套用", icon=ft.Icons.SAVE, on_click=self._save_apply),
+                ft.TextButton("只套用不存", on_click=self._apply_only),
+                ft.TextButton("取消", on_click=self._cancel),
+            ], wrap=True),
+        ]
+        self.confirm.visible = True
+        self.status.value = ""
+        self.update()
+
+    def _save_apply(self, _e) -> None:
+        try:
+            saved = self.ctl.apply_pending_timetable(save_path=(self._json.value or "").strip())
+        except OSError as exc:
+            self.status.value = f"存檔失敗：{exc}"
+            self.update()
+            return
+        self.settings.timetable_path = saved or ""
+        self.settings.save()
+        self._finish(f"✓ 課表已存並套用：{saved}")
+
+    def _apply_only(self, _e) -> None:
+        self.ctl.apply_pending_timetable()
+        self.settings.timetable_path = ""
+        self.settings.save()
+        self._finish("✓ 課表已套用（未存檔）")
+
+    def _cancel(self, _e) -> None:
+        self.ctl._pending_tt = None
+        self.confirm.visible = False
+        self._refresh()
+        self.update()
+
+    def _finish(self, msg: str) -> None:
+        self.confirm.visible = False
+        self._refresh()
+        self.update()
+        self.on_changed(msg)

@@ -1,6 +1,7 @@
 # 於 flet 0.86.5 開發測試；API 在 0.80→1.0 之間仍在變動，如遇問題請鎖定此版本
 flet>=0.86,<0.90
 openpyxl>=3.1
+pdfplumber>=0.11        # 匯入教師課表 PDF
 
 # dev
 pytest>=8.0

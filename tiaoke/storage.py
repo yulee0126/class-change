@@ -51,6 +51,24 @@ def load_project(path: str) -> Project:
 
 
 # --------------------------------------------------------------------------
+# 課表 .json
+# --------------------------------------------------------------------------
+
+def save_timetable(tt, path: str) -> str:
+    path = _ensure_ext(path, ".json")
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(tt.to_dict(), fh, ensure_ascii=False, indent=1)
+    return path
+
+
+def load_timetable(path: str):
+    from .timetable import Timetable
+    with open(path, "r", encoding="utf-8") as fh:
+        return Timetable.from_dict(json.load(fh))
+
+
+# --------------------------------------------------------------------------
 # 應用設定
 # --------------------------------------------------------------------------
 
@@ -66,6 +84,7 @@ class AppSettings:
     last_project: str = ""
     default_master_path: str = ""
     default_class_slip_style: str = "banner"
+    timetable_path: str = ""
     window_width: int = 1180
     window_height: int = 820
     recent_projects: list[str] = field(default_factory=list)

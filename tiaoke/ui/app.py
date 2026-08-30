@@ -589,26 +589,43 @@ def _safe_update(ctrl) -> None:
 
 
 def _event_date(e) -> datetime.date | None:
-    """從 DatePicker on_change 事件安全取出日期。
+    """從 DatePicker on_change 事件取出「使用者按的那一天」。
 
-    優先解析 e.data 的 ISO 字串（不受時區影響）；退而用 e.control.value。
-    DatePicker 以「中午」為預設值開啟，所以就算平台把時間轉成 UTC，
-    ±14 小時仍落在同一天，直接取 .date() 即可。
+    Flet 會把選到的日期序列化成 UTC ISO 字串（帶 Z），若直接取字串前 10 碼
+    會在 UTC+8 少一天。作法：連同時區資訊解析 → 轉回本地時區 → 取 date。
     """
-    raw = getattr(e, "data", None)
-    if isinstance(raw, str):
-        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", raw)
-        if m:
+    for cand in (getattr(e, "data", None),
+                 getattr(getattr(e, "control", None), "value", None)):
+        d = _coerce_local_date(cand)
+        if d is not None:
+            return d
+    return None
+
+
+def _coerce_local_date(v) -> datetime.date | None:
+    if isinstance(v, datetime.datetime):
+        dt = v
+    elif isinstance(v, datetime.date):
+        return v
+    elif isinstance(v, str):
+        s = v.strip().strip('"')
+        if not s:
+            return None
+        try:
+            dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            m = re.search(r"(\d{4})-(\d{2})-(\d{2})", s)
+            if not m:
+                return None
             try:
                 return datetime.date(int(m[1]), int(m[2]), int(m[3]))
             except ValueError:
-                pass
-    v = getattr(getattr(e, "control", None), "value", None)
-    if isinstance(v, datetime.datetime):
-        return v.date()
-    if isinstance(v, datetime.date):
-        return v
-    return None
+                return None
+    else:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()          # → 本地時區
+    return dt.date()
 
 
 def _guide_card() -> ft.Control:

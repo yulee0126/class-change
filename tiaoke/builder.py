@@ -21,7 +21,6 @@ class TeacherRow:
     orig: Slot | None
     note: str
     highlight: bool = False
-    short: str | None = None   # J 欄代課老師簡稱（紅字）
 
 
 @dataclass
@@ -88,8 +87,7 @@ def build(event: Event) -> list[Slip]:
             hl = leg.from_swap
             tr(leg.orig_teacher).append(TeacherRow(
                 klass=leg.klass, new=None, subject=leg.subject, orig=leg.slot,
-                note=f"{_bare(leg.sub_teacher)}老師 代課",
-                highlight=hl, short=_short(leg.sub_teacher) if hl else None,
+                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl,
             ))
             tr(leg.sub_teacher).append(TeacherRow(
                 klass=leg.klass, new=leg.slot, subject=leg.subject, orig=None,
@@ -123,12 +121,6 @@ def _bare(name: str) -> str:
     """移除結尾的「老師」，避免重複。"""
     name = name.strip()
     return name[:-2] if name.endswith("老師") else name
-
-
-def _short(name: str) -> str:
-    """代課老師簡稱：末兩字。"""
-    n = _bare(name)
-    return n[-2:] if len(n) >= 2 else n
 
 
 # --------------------------------------------------------------------------

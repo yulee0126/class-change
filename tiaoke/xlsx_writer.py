@@ -91,8 +91,6 @@ def _teacher_slip(ws: Worksheet, r: int, slip: TeacherSlip, event: Event) -> int
                 put(ws, f"{col}{r}", None, fill=fill)
         put(ws, f"E{r}", row.subject, align=CENTER, fill=fill)
         put(ws, f"I{r}", row.note, align=LEFT_WRAP, fill=fill)
-        if row.short:
-            put(ws, f"J{r}", row.short, font=body_font(color="FFFF0000"), align=LEFT)
         r += 1
     last_data = r - 1
 

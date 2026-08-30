@@ -24,3 +24,6 @@ Thumbs.db
 # Local output
 out/
 *.local.json
+
+build_out/
+*.spec

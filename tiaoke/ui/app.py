@@ -99,8 +99,6 @@ class AppView:
         self.page = page
         self.settings = AppSettings.load()
         self.ctl = AppController()
-        if self.settings.default_master_path:
-            self.ctl.project.master_path = self.settings.default_master_path
         if self.settings.timetable_path and os.path.exists(self.settings.timetable_path):
             try:
                 self.ctl.load_timetable(self.settings.timetable_path)
@@ -333,17 +331,12 @@ class AppView:
         # ---------- 4. 產生 ----------
         self.editor.controls.append(ft.Divider())
         self.editor.controls.append(_section("④ 產生 Excel"))
-        self.cb_new = ft.Checkbox(label="另存成一個新檔", value=True)
-        self.tf_new = ft.TextField(label="新檔存到", value=self.ctl.default_new_path(),
+        self.tf_new = ft.TextField(label="存到", value=self.ctl.default_new_path(),
                                    expand=True, dense=True)
-        self.cb_master = ft.Checkbox(label="也寫進學期總表（同分頁會被覆蓋更新）",
-                                     value=bool(self.ctl.project.master_path))
-        self.tf_master = ft.TextField(label="總表檔", value=self.ctl.project.master_path,
-                                      expand=True, dense=True,
-                                      hint_text=r"例：C:\...\115-1手動調代課-兼課.xlsx")
-        self.editor.controls.append(ft.Row([self.cb_new, self.tf_new]))
-        self.editor.controls.append(ft.Row([self.cb_master, self.tf_master]))
-        self.editor.controls.append(_hint("兩個可以同時勾。至少勾一個。"))
+        self.editor.controls.append(self.tf_new)
+        self.editor.controls.append(_hint(
+            "產生這張單的 Excel，同時把代課／調課明細寫進記錄檔。\n"
+            "要把所有單合成一個檔，用左側進階的「儲存」或「只匯出全部成一個 Excel」。"))
         self.editor.controls.append(ft.Button(
             "產生 Excel", icon=ft.Icons.TABLE_VIEW, height=44,
             on_click=self._on_generate,
@@ -453,11 +446,13 @@ class AppView:
         self.refresh()
 
     def _on_generate(self, _e) -> None:
+        dest = (self.tf_new.value or "").strip()
+        if not dest:
+            self._set_status("請先填「存到」的路徑。")
+            return
         try:
             results = self.ctl.generate(
-                to_master=self.cb_master.value, save_new=self.cb_new.value,
-                master_path=(self.tf_master.value or "").strip(),
-                dest_path=(self.tf_new.value or "").strip(),
+                to_master=False, save_new=True, dest_path=dest,
             )
         except ValueError as exc:
             self._show_dialog("還不能產生", [str(exc)])
@@ -465,15 +460,10 @@ class AppView:
             return
         ok_lines, err_lines = [], []
         for r in results:
-            tag = "學期總表" if r.target == "master" else "新檔"
             if r.ok:
-                extra = "（更新既有分頁）" if r.replaced_sheet else "（新分頁）"
-                ok_lines.append(f"✓ {tag} {extra}\n{r.path}")
+                ok_lines.append(f"✓ 通知單 Excel\n{r.path}")
             else:
-                err_lines.append(f"✗ {tag}：{r.error}")
-        if self.ctl.project.master_path:
-            self.settings.default_master_path = self.ctl.project.master_path
-            self.settings.save()
+                err_lines.append(f"✗ {r.error}")
 
         rec = self.ctl.last_record
         if rec is not None:
@@ -580,8 +570,6 @@ class AppView:
         try:
             self.settings.window_width = int(self.page.window.width)
             self.settings.window_height = int(self.page.window.height)
-            if self.ctl.project.master_path:
-                self.settings.default_master_path = self.ctl.project.master_path
             self.settings.save()
         except Exception:
             pass

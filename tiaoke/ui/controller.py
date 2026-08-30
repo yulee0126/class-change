@@ -399,7 +399,10 @@ class AppController:
         ev = self.current
         if ev is None:
             return ""
-        folder = os.path.dirname(self.project.master_path) if self.project.master_path else os.getcwd()
+        if self.record_folder:
+            folder = os.path.dirname(self.record_folder.rstrip("/\\")) or self.record_folder
+        else:
+            folder = os.getcwd()
         return os.path.join(folder, f"{ev.sheet_name}.xlsx")
 
     def generate(self, *, to_master: bool, save_new: bool,

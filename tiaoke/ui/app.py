@@ -183,13 +183,16 @@ class AppView:
 
         # ---------- 1. 基本資料 ----------
         self.editor.controls.append(_section("① 基本資料"))
-        f_orig = ft.TextField(label="發起教師", value=ev.originator, width=170,
-                              on_change=lambda e: self._set(originator=e.control.value))
+        self._orig_field = _NameField(
+            "發起教師", ev.originator, self._all_teacher_names(), width=170,
+            on_change=lambda: self._set(originator=self._orig_field.value))
         f_form = ft.TextField(label="假單編號", value=ev.form_no or DEFAULT_FORM_NO, width=190,
                               on_change=lambda e: self._set(form_no=e.control.value))
         self._ann_date = _DateField(self.page, "公告日期", ev.announce_date,
                                     on_change=lambda: self._pull_ann_date())
-        self.editor.controls.append(ft.Row([f_orig, f_form, self._ann_date.control], wrap=True))
+        self.editor.controls.append(ft.Row(
+            [self._orig_field.control, f_form, self._ann_date.control], wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.START))
         self.editor.controls.append(_hint(
             "發起教師＝因為誰請假／要調課而發起這次異動（通知單抬頭會出現，也會自動帶進下面的甲老師／原老師）。\n"
             "假單編號＝請假系統的單號，自己打，例如「手動+1076」「2015+手動」。\n"
@@ -465,6 +468,11 @@ class AppView:
         msg += f"\n{r.path}" if r.ok else f"\n（Excel 匯出失敗：{r.error}）"
         self._set_status(msg)
         self.refresh()
+
+    def _all_teacher_names(self) -> list[str]:
+        names = set(self.ctl.timetable_teacher_names())
+        names.update(self.ctl.project.teachers)
+        return sorted(names)
 
     def _on_tt_changed(self, msg: str) -> None:
         self._set_status(msg)

@@ -82,7 +82,24 @@ def _ev_wenming_1150831() -> Event:
     )
 
 
+def _ev_example1() -> Event:
+    """對照範例檔「範例1」分頁：曹朱榜↔張詠竣 對調，班級單用標題式。"""
+    return Event(
+        originator="曹朱榜",
+        leave_type="公假",
+        form_no="手動+1076",
+        announce_date=_D(2021, 10, 14),
+        sheet_date=_D(2021, 11, 3),
+        class_slip_style="title",
+        legs=[
+            SwapLeg("二丁技", "曹朱榜", "彈性學習", Slot(_D(2021, 11, 3), 3),
+                    "張詠竣", "電子學", Slot(_D(2021, 11, 5), 5)),
+        ],
+    )
+
+
 SAMPLES: dict[str, "callable[[], Event]"] = {
+    "範例1": _ev_example1,
     "瑞文1150223": _ev_ruiwen_1150223,
     "代課範例": _ev_daike_example,
     "若耶1150226": _ev_ruoye_1150226,

@@ -269,10 +269,15 @@ class AppView:
                       on_click=lambda e: self._open_leg_form("swap")),
             ft.Button("＋ 新增代課", icon=ft.Icons.PERSON_ADD_ALT,
                       on_click=lambda e: self._open_leg_form("sub")),
-        ]))
+            ft.Button("＋ 先調再代", icon=ft.Icons.SYNC_PROBLEM,
+                      on_click=lambda e: self._open_leg_form("swapsub")),
+        ], wrap=True))
+        self.editor.controls.append(_hint(
+            "先調再代＝甲老師把某節課調到新時段後，那節新時段再請人代（因為甲要請假）。"
+            "一次會產生「1 筆調課 + 1 筆代課」。"))
         summaries = self.ctl.leg_summaries()
         if not summaries:
-            self.editor.controls.append(_hint("（還沒加，先按上面兩顆按鈕）"))
+            self.editor.controls.append(_hint("（還沒加，先按上面按鈕）"))
         for i, summary in enumerate(summaries):
             editing = self._leg_form is not None and self._leg_form.edit_index == i
             self.editor.controls.append(ft.Row([
@@ -421,13 +426,17 @@ class AppView:
                 self.ctl.update_leg(edit_index, kind, **data)
             elif kind == "swap":
                 self.ctl.add_swap_leg(**data)
+            elif kind == "swapsub":
+                self.ctl.add_swap_then_sub(**data)
             else:
                 self.ctl.add_sub_leg(**data)
         except (ValueError, KeyError) as exc:
             self._set_status(f"存不進去：{exc}")
             return
         self._leg_form = None
-        self._set_status("已更新一筆。" if edit_index is not None else "已加入一筆。")
+        msg = "已更新一筆。" if edit_index is not None else (
+            "已加入 1 筆調課 + 1 筆代課。" if kind == "swapsub" else "已加入一筆。")
+        self._set_status(msg)
         self.refresh()
 
     def _on_generate(self, _e) -> None:
@@ -438,21 +447,50 @@ class AppView:
                 dest_path=(self.tf_new.value or "").strip(),
             )
         except ValueError as exc:
+            self._show_dialog("還不能產生", [str(exc)])
             self._set_status(str(exc))
             return
-        lines = []
+        ok_lines, err_lines = [], []
         for r in results:
-            tag = "總表" if r.target == "master" else "新檔"
+            tag = "學期總表" if r.target == "master" else "新檔"
             if r.ok:
-                extra = "（已更新既有分頁）" if r.replaced_sheet else ""
-                lines.append(f"✓ {tag}：{r.path} {extra}")
+                extra = "（更新既有分頁）" if r.replaced_sheet else "（新分頁）"
+                ok_lines.append(f"✓ {tag} {extra}\n{r.path}")
             else:
-                lines.append(f"✗ {tag}：{r.error}")
+                err_lines.append(f"✗ {tag}：{r.error}")
         if self.ctl.project.master_path:
             self.settings.default_master_path = self.ctl.project.master_path
             self.settings.save()
-        self._set_status("\n".join(lines))
+
+        title = "已產生 Excel" if ok_lines and not err_lines else (
+            "部分未成功" if ok_lines else "產生失敗")
+        self._show_dialog(title, ok_lines + err_lines)
+        self._set_status("　｜　".join(l.replace("\n", " ") for l in ok_lines + err_lines))
         self.refresh()
+
+    # ---- 結果對話框 ----
+    def _show_dialog(self, title: str, lines: list[str]) -> None:
+        self._dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(title, weight=ft.FontWeight.BOLD),
+            content=ft.Column([ft.Text(l, selectable=True) for l in lines],
+                              tight=True, width=560, spacing=6),
+            actions=[ft.TextButton("好", on_click=lambda e: self._close_dialog())],
+        )
+        try:
+            self.page.show_dialog(self._dlg)
+        except Exception:
+            self.page.overlay.append(self._dlg)
+            self._dlg.open = True
+            self.page.update()
+
+    def _close_dialog(self) -> None:
+        try:
+            self.page.pop_dialog()
+        except Exception:
+            if getattr(self, "_dlg", None):
+                self._dlg.open = False
+        self.page.update()
 
     def _on_new_project(self, _e) -> None:
         self.ctl.new_project()
@@ -669,7 +707,7 @@ class _LegForm(ft.Container):
         self.pick_a = ft.Column(spacing=2, tight=True)
         self.pick_b = ft.Column(spacing=2, tight=True)
 
-        if kind == "swap":
+        if kind in ("swap", "swapsub"):
             self.ta = nf("甲老師", ini.get("teacher_a") or originator)
             self.sa = tf("甲的科目", 130, ini.get("subject_a"))
             self.da = _DateField(page, "甲原本日期", ini.get("date_a") or today, width=130,
@@ -680,10 +718,21 @@ class _LegForm(ft.Container):
             self.db = _DateField(page, "乙原本日期", ini.get("date_b") or today, width=130,
                                  on_change=self._sync)
             self.pb = _period_dd(ini.get("period_b"))
-            body = [
-                ft.Text(("修改" if editing else "新增") + "調課", weight=ft.FontWeight.BOLD),
-                _hint("甲、乙兩位老師在「同一個班」各挑一節課互換。\n"
-                      "換完：甲改上乙的時段、乙改上甲的時段。"),
+            if kind == "swapsub":
+                self.stx = nf("代課老師", "")
+                body = [
+                    ft.Text("先調再代", weight=ft.FontWeight.BOLD),
+                    _hint("甲老師把「甲方」這節課調到「乙方」的時段後，那節（乙方時段）"
+                          "再請代課老師代（因為甲要請假）。會產生 1 筆調課 + 1 筆代課。"),
+                ]
+            else:
+                self.stx = None
+                body = [
+                    ft.Text(("修改" if editing else "新增") + "調課", weight=ft.FontWeight.BOLD),
+                    _hint("甲、乙兩位老師在「同一個班」各挑一節課互換。\n"
+                          "換完：甲改上乙的時段、乙改上甲的時段。"),
+                ]
+            body += [
                 ft.Row([self.klass], wrap=True),
                 ft.Text("甲方（原時段）", size=12, color=_HINT),
                 ft.Row([self.ta.control, self.sa, self.da.control, self.pa], wrap=True,
@@ -694,6 +743,11 @@ class _LegForm(ft.Container):
                        vertical_alignment=ft.CrossAxisAlignment.START),
                 self.pick_b,
             ]
+            if self.stx is not None:
+                body += [
+                    ft.Text("調到乙方時段後，那節由誰代", size=12, color=_HINT),
+                    ft.Row([self.stx.control], wrap=True),
+                ]
         else:
             self.ot = nf("原老師", ini.get("orig_teacher") or originator)
             self.subj = tf("科目", 130, ini.get("subject"))
@@ -739,7 +793,7 @@ class _LegForm(ft.Container):
             pass
 
     def _fill_picks(self) -> None:
-        if self.kind == "swap":
+        if self.kind in ("swap", "swapsub"):
             self.pick_a.controls = self._pick_ctrls(self.ta.value, self.da, "a")
             self.pick_b.controls = self._pick_ctrls(self.tb.value, self.db, "b")
         else:
@@ -757,7 +811,8 @@ class _LegForm(ft.Container):
             return []
         wd = "一二三四五"[d.weekday()]
         # 乙方：和甲同一班的課用紅色 highlight，並排前面
-        want = (self.klass.value or "").strip() if (self.kind == "swap" and side == "b") else ""
+        want = (self.klass.value or "").strip() if (
+            self.kind in ("swap", "swapsub") and side == "b") else ""
         if want:
             slots = sorted(slots, key=lambda s: s.klass != want)
         row = ft.Row(wrap=True, spacing=4, run_spacing=2)
@@ -777,7 +832,7 @@ class _LegForm(ft.Container):
         return [ft.Text(cap + "：", size=11, color=_HINT), row]
 
     def _apply_slot(self, side, s) -> None:
-        if self.kind == "swap":
+        if self.kind in ("swap", "swapsub"):
             if side == "a":
                 self.sa.value, self.pa.value = s.subject, str(s.period)
                 # 甲定了班級 → 乙方 highlight 依此更新
@@ -793,7 +848,7 @@ class _LegForm(ft.Container):
 
     def _submit(self, _e) -> None:
         try:
-            if self.kind == "swap":
+            if self.kind in ("swap", "swapsub"):
                 data = dict(
                     klass=self.klass.value or "",
                     teacher_a=self.ta.value or "", subject_a=self.sa.value or "",
@@ -801,6 +856,11 @@ class _LegForm(ft.Container):
                     teacher_b=self.tb.value or "", subject_b=self.sb.value or "",
                     date_b=self._req(self.db), period_b=self._period(self.pb, "乙節次"),
                 )
+                if self.kind == "swapsub":
+                    st = (self.stx.value or "").strip()
+                    if not st:
+                        raise ValueError("請填代課老師")
+                    data["sub_teacher"] = st
             else:
                 data = dict(
                     klass=self.klass.value or "",

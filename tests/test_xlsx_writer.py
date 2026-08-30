@@ -1,10 +1,13 @@
 import io
+import os
 
 import openpyxl
 import pytest
 
 from tiaoke import output, samples
 from tiaoke.xlsx_writer import write_sheet
+
+_REF = r"C:\Users\lolola\Desktop\調課代課程式\115-1手動調代課-兼課.xlsx"
 
 
 def _render(event) -> openpyxl.worksheet.worksheet.Worksheet:
@@ -66,6 +69,25 @@ def test_merged_regions_exist():
     merged = {str(r) for r in ws.merged_cells.ranges}
     assert "B1:I1" in merged           # 教師單橫幅
     assert any(m.startswith("E2:E3") for m in merged)  # 授課科目
+    # 「調課後授課時間」「原授課時間」不合併（比照範例檔）
+    assert "C2:D2" not in merged
+    assert "G2:H2" not in merged
+
+
+@pytest.mark.skipif(not os.path.exists(_REF), reason="找不到範例檔")
+def test_example1_matches_reference_layout():
+    ws = _render(samples.get("範例1"))
+    ex = openpyxl.load_workbook(_REF)["範例1"]
+
+    def merges(w):
+        return sorted(str(r) for r in w.merged_cells.ranges
+                      if not str(r).startswith(("K", "L")))
+
+    assert merges(ws) == merges(ex)
+    assert ws.max_row == 19
+    for col in "ABCDEFGHI":
+        assert ws.column_dimensions[col].width == pytest.approx(
+            ex.column_dimensions[col].width)
 
 
 def test_write_to_master_creates_then_replaces(tmp_path):

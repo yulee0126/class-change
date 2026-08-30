@@ -32,6 +32,7 @@ class ClassRow:
     subject: str
     note: str
     highlight: bool = False
+    is_sub: bool = False   # True＝代課列（排在調課列之後）
 
 
 @dataclass
@@ -82,6 +83,7 @@ def build(event: Event) -> list[Slip]:
                 slot=leg.slot_b, subject=leg.subject_a,
                 note=f"調課(原{_bare(leg.teacher_b)}老師/{leg.subject_b})",
             ))
+            # class rows above are 調課 → is_sub 預設 False
         elif isinstance(leg, SubLeg):
             hl = leg.from_swap
             tr(leg.orig_teacher).append(TeacherRow(
@@ -95,7 +97,7 @@ def build(event: Event) -> list[Slip]:
             ))
             cr(leg.klass).append(ClassRow(
                 slot=leg.slot, subject=leg.subject,
-                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl,
+                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl, is_sub=True,
             ))
         else:  # pragma: no cover - 防呆
             raise TypeError(f"未知的腳型別：{type(leg)!r}")
@@ -103,7 +105,7 @@ def build(event: Event) -> list[Slip]:
     for rows in teacher_rows.values():
         rows.sort(key=_teacher_row_key)
     for rows in class_rows.values():
-        rows.sort(key=lambda cr_: (cr_.slot.date, cr_.slot.period))
+        rows.sort(key=lambda cr_: (cr_.is_sub, cr_.slot.date, cr_.slot.period))
 
     slips: list[Slip] = [TeacherSlip(name, rows) for name, rows in teacher_rows.items()]
     slips += [ClassSlip(klass, rows) for klass, rows in class_rows.items()]
@@ -111,9 +113,10 @@ def build(event: Event) -> list[Slip]:
 
 
 def _teacher_row_key(row: TeacherRow):
-    """依主要時段（優先看調課後，其次原時段）排序。"""
+    """先所有調課列、再所有代課列；各自依主要時段排序。"""
+    is_sub = row.new is None or row.orig is None
     primary = row.new or row.orig
-    return (primary.date, primary.period)
+    return (is_sub, primary.date, primary.period)
 
 
 def _bare(name: str) -> str:

@@ -288,6 +288,20 @@ class AppController:
         self._require_event().legs.append(leg)
         self._learn_names(leg.klass, [leg.orig_teacher, leg.sub_teacher], [leg.subject])
 
+    def add_swap_then_sub(self, *, klass, teacher_a, subject_a, date_a, period_a,
+                          teacher_b, subject_b, date_b, period_b, sub_teacher) -> None:
+        """先調再代：甲把課調到乙的時段後，那節新時段再請人代（甲要請假）。
+        產生 1 筆調課 + 1 筆代課（from_swap=True，代課時段＝乙原時段、科目＝甲科目）。"""
+        ev = self._require_event()
+        swap = self._build_swap(klass, teacher_a, subject_a, date_a, period_a,
+                                teacher_b, subject_b, date_b, period_b)
+        sub = self._build_sub(klass, teacher_a, subject_a, date_b, period_b,
+                              sub_teacher, from_swap=True)
+        ev.legs.append(swap)
+        ev.legs.append(sub)
+        self._learn_names(klass, [teacher_a, teacher_b, sub_teacher],
+                          [subject_a, subject_b])
+
     def update_leg(self, index: int, kind: str, **kw) -> None:
         ev = self.current
         if not ev or not (0 <= index < len(ev.legs)):

@@ -16,7 +16,7 @@ from .styles import (
     title_font,
 )
 
-_SPACER = 1  # 每張通知單後空一列
+_SPACER = 2  # 每張通知單後空兩列（比照範例1）
 
 
 def banner_text(event: Event) -> str:
@@ -98,9 +98,8 @@ def _teacher_slip(ws: Worksheet, r: int, slip: TeacherSlip, event: Event) -> int
 
     styles.outline_grid(ws, f"A{hdr1}:I{last_data}")
     _merge(ws, f"B{top}:I{top}")
-    _merge(ws, f"C{hdr1}:D{hdr1}")
-    _merge(ws, f"G{hdr1}:H{hdr1}")
     _merge(ws, f"E{hdr1}:E{hdr2}")
+    # 註：「調課後授課時間」C:D、「原授課時間」G:H 在範例檔並未合併，故不合併
 
     _announce_row(ws, r, event)
     r += 1

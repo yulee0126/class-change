@@ -79,6 +79,11 @@ def _config_dir() -> Path:
     return d
 
 
+def default_db_path() -> str:
+    """預設的「調代課資料庫」JSON 路徑。"""
+    return str(_config_dir() / "調代課資料庫.json")
+
+
 @dataclass
 class AppSettings:
     last_project: str = ""

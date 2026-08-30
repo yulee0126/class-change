@@ -10,12 +10,30 @@ import datetime
 import os
 from dataclasses import dataclass, field
 
-from .. import note_draft, output, storage
+from .. import models, note_draft, output, storage
 from ..builder import ClassSlip, TeacherSlip, build, validate
 from ..models import (CLASS_SLIP_STYLES, LEAVE_TYPES, Event, Project, Slot,
                       SubLeg, SwapLeg)
 
 DEFAULT_FORM_NO = "手動+"
+
+
+@dataclass
+class SaveReport:
+    added: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    path: str = ""
+
+    def __str__(self) -> str:
+        bits = []
+        if self.added:
+            bits.append(f"新增 {self.added}")
+        if self.updated:
+            bits.append(f"更新 {self.updated}")
+        if self.unchanged:
+            bits.append(f"重複略過 {self.unchanged}")
+        return "、".join(bits) or "無變更"
 
 
 @dataclass
@@ -87,11 +105,57 @@ class AppController:
         self.current_index = None
         self.project_path = ""
 
-    def save_project(self, path: str) -> str:
-        self.project.merge_master_data()
-        storage.save_project(self.project, path)
-        self.project_path = storage._ensure_ext(path, ".json")
-        return self.project_path
+    def save_project(self, path: str) -> SaveReport:
+        """把本次的調代課單併進資料庫 JSON（依分頁名稱去重／更新），寫回，
+        並讓目前的清單同步成資料庫全部內容。"""
+        path = storage._ensure_ext(path, ".json")
+        existing = storage.load_project(path) if os.path.exists(path) else Project()
+
+        merged = list(existing.events)
+        idx_by_name = {ev.sheet_name: i for i, ev in enumerate(merged)}
+        dicts = [models.event_to_dict(e) for e in merged]
+        report = SaveReport(path=path)
+        keep_name = self.current.sheet_name if self.current else None
+
+        for ev in self.project.events:
+            d = models.event_to_dict(ev)
+            name = ev.sheet_name
+            if name in idx_by_name:
+                j = idx_by_name[name]
+                if dicts[j] == d:
+                    report.unchanged += 1
+                else:
+                    merged[j] = ev
+                    dicts[j] = d
+                    report.updated += 1
+            elif d in dicts:
+                report.unchanged += 1
+            else:
+                merged.append(ev)
+                dicts.append(d)
+                idx_by_name[name] = len(merged) - 1
+                report.added += 1
+
+        out = Project(
+            events=merged,
+            master_path=self.project.master_path or existing.master_path,
+            teachers=list(existing.teachers), classes=list(existing.classes),
+            subjects=list(existing.subjects),
+        )
+        out.merge_master_data()
+        storage.save_project(out, path)
+
+        self.project = out
+        self.project_path = path
+        self.current_index = None
+        if keep_name:
+            for i, ev in enumerate(out.events):
+                if ev.sheet_name == keep_name:
+                    self.current_index = i
+                    break
+        if self.current_index is None and out.events:
+            self.current_index = len(out.events) - 1
+        return report
 
     def export_all_xlsx(self, path: str) -> output.TargetResult:
         """把所有事件匯出成一個 Excel（一事件一分頁）。"""

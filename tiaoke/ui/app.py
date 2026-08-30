@@ -100,7 +100,17 @@ class AppView:
             pass
 
         self.status = ft.Text("", color=ft.Colors.BLUE_GREY_800, selectable=True)
-        self.project_path = ft.TextField(hint_text="專案存檔路徑 .json", dense=True,
+
+        # 預設一個「資料庫」JSON；存在就開機自動載入
+        from ..storage import default_db_path
+        if not self.settings.last_project:
+            self.settings.last_project = default_db_path()
+        if os.path.exists(self.settings.last_project):
+            try:
+                self.ctl.load_project(self.settings.last_project)
+            except Exception:
+                pass
+        self.project_path = ft.TextField(hint_text="資料庫 .json", dense=True,
                                          value=self.settings.last_project, expand=True)
         self.event_list = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO)
         self.editor = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
@@ -455,16 +465,16 @@ class AppView:
             self._set_status("先在上面欄位打一個路徑（副檔名可省略）。")
             return
         try:
-            saved = self.ctl.save_project(path)
+            rep = self.ctl.save_project(path)
         except OSError as exc:
             self._set_status(f"儲存失敗：{exc}")
             return
-        xlsx = saved[:-5] + ".xlsx"
+        xlsx = rep.path[:-5] + ".xlsx"
         r = self.ctl.export_all_xlsx(xlsx)
-        self.project_path.value = saved
-        self.settings.note_recent(saved)
+        self.project_path.value = rep.path
+        self.settings.note_recent(rep.path)
         self.settings.save()
-        msg = f"已儲存：\n{saved}"
+        msg = f"已儲存資料庫（{rep}）：\n{rep.path}"
         msg += f"\n{r.path}" if r.ok else f"\n（Excel 匯出失敗：{r.error}）"
         self._set_status(msg)
         self.refresh()

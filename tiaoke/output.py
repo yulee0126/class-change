@@ -30,6 +30,43 @@ def build_single_workbook(event: Event) -> Workbook:
     return wb
 
 
+def export_all(events: list[Event], dest_path: str) -> TargetResult:
+    """把多個事件寫進同一個新活頁簿，一個事件一張工作表。"""
+    try:
+        dest_path = _ensure_xlsx(dest_path)
+        wb = Workbook()
+        wb.remove(wb.active)
+        used: set[str] = set()
+        for ev in events:
+            title = _unique_title(_safe_sheet_title(ev.sheet_name), used)
+            used.add(title)
+            ws = wb.create_sheet(title=title)
+            xlsx_writer.write_sheet(ws, ev)
+        if not wb.sheetnames:
+            wb.create_sheet(title="（無事件）")
+        wb.save(dest_path)
+        return TargetResult("all", dest_path, ok=True, last_row=len(events))
+    except PermissionError:
+        return TargetResult("all", dest_path, ok=False,
+                            error="無法寫入：檔案可能正在 Excel 中開啟。")
+    except Exception as exc:  # noqa: BLE001
+        return TargetResult("all", dest_path, ok=False, error=str(exc))
+
+
+def _unique_title(title: str, used: set[str]) -> str:
+    if title not in used:
+        return title
+    for i in range(2, 100):
+        cand = f"{title[:28]}_{i}"
+        if cand not in used:
+            return cand
+    return title[:31]
+
+
+def _ensure_xlsx(path: str) -> str:
+    return path if path.lower().endswith(".xlsx") else path + ".xlsx"
+
+
 def save_as_new(event: Event, dest_path: str) -> TargetResult:
     try:
         wb = build_single_workbook(event)

@@ -59,6 +59,10 @@ class AppController:
         self.project_path = storage._ensure_ext(path, ".json")
         return self.project_path
 
+    def export_all_xlsx(self, path: str) -> output.TargetResult:
+        """把所有事件匯出成一個 Excel（一事件一分頁）。"""
+        return output.export_all(self.project.events, path)
+
     def load_project(self, path: str) -> None:
         self.project = storage.load_project(path)
         self.project_path = path
@@ -154,31 +158,74 @@ class AppController:
             ev.sheet_name_override = sheet_name_override or None
 
     # ---- 腳 --------------------------------------------------------
-    def add_swap_leg(self, *, klass: str, teacher_a: str, subject_a: str,
-                     date_a: datetime.date, period_a: int,
-                     teacher_b: str, subject_b: str,
-                     date_b: datetime.date, period_b: int) -> None:
-        ev = self._require_event()
-        ev.legs.append(SwapLeg(
+    @staticmethod
+    def _build_swap(klass, teacher_a, subject_a, date_a, period_a,
+                    teacher_b, subject_b, date_b, period_b) -> SwapLeg:
+        return SwapLeg(
             klass=klass.strip(),
             teacher_a=teacher_a.strip(), subject_a=subject_a.strip(),
             slot_a=Slot(date_a, int(period_a)),
             teacher_b=teacher_b.strip(), subject_b=subject_b.strip(),
             slot_b=Slot(date_b, int(period_b)),
-        ))
-        self._learn_names(klass, [teacher_a, teacher_b], [subject_a, subject_b])
+        )
 
-    def add_sub_leg(self, *, klass: str, orig_teacher: str, subject: str,
-                    date: datetime.date, period: int, sub_teacher: str,
-                    from_swap: bool = False) -> None:
-        ev = self._require_event()
-        ev.legs.append(SubLeg(
+    @staticmethod
+    def _build_sub(klass, orig_teacher, subject, date, period, sub_teacher,
+                   from_swap=False) -> SubLeg:
+        return SubLeg(
             klass=klass.strip(),
             orig_teacher=orig_teacher.strip(), subject=subject.strip(),
             slot=Slot(date, int(period)), sub_teacher=sub_teacher.strip(),
             from_swap=from_swap,
-        ))
-        self._learn_names(klass, [orig_teacher, sub_teacher], [subject])
+        )
+
+    def add_swap_leg(self, **kw) -> None:
+        leg = self._build_swap(**kw)
+        self._require_event().legs.append(leg)
+        self._learn_names(leg.klass, [leg.teacher_a, leg.teacher_b],
+                          [leg.subject_a, leg.subject_b])
+
+    def add_sub_leg(self, **kw) -> None:
+        leg = self._build_sub(**kw)
+        self._require_event().legs.append(leg)
+        self._learn_names(leg.klass, [leg.orig_teacher, leg.sub_teacher], [leg.subject])
+
+    def update_leg(self, index: int, kind: str, **kw) -> None:
+        ev = self.current
+        if not ev or not (0 <= index < len(ev.legs)):
+            return
+        leg = self._build_swap(**kw) if kind == "swap" else self._build_sub(**kw)
+        ev.legs[index] = leg
+        if kind == "swap":
+            self._learn_names(leg.klass, [leg.teacher_a, leg.teacher_b],
+                              [leg.subject_a, leg.subject_b])
+        else:
+            self._learn_names(leg.klass, [leg.orig_teacher, leg.sub_teacher], [leg.subject])
+
+    def leg_at(self, index: int):
+        ev = self.current
+        if ev and 0 <= index < len(ev.legs):
+            return ev.legs[index]
+        return None
+
+    def leg_form_data(self, index: int) -> dict | None:
+        """把某一筆腳轉成表單可用的初始值。"""
+        leg = self.leg_at(index)
+        if leg is None:
+            return None
+        if isinstance(leg, SwapLeg):
+            return dict(
+                kind="swap", klass=leg.klass,
+                teacher_a=leg.teacher_a, subject_a=leg.subject_a,
+                date_a=leg.slot_a.date, period_a=leg.slot_a.period,
+                teacher_b=leg.teacher_b, subject_b=leg.subject_b,
+                date_b=leg.slot_b.date, period_b=leg.slot_b.period,
+            )
+        return dict(
+            kind="sub", klass=leg.klass, orig_teacher=leg.orig_teacher,
+            subject=leg.subject, date=leg.slot.date, period=leg.slot.period,
+            sub_teacher=leg.sub_teacher, from_swap=leg.from_swap,
+        )
 
     def add_sub_batch(self, *, orig_teacher: str,
                       items: list[dict]) -> int:
@@ -196,17 +243,21 @@ class AppController:
         ev = self.current
         if not ev:
             return []
+        def ts(teacher: str, subject: str) -> str:
+            return f"{teacher}（{subject}）" if subject else (teacher or "？")
+
         out = []
         for leg in ev.legs:
             if isinstance(leg, SwapLeg):
                 out.append(
-                    f"調課　{leg.klass}｜{leg.teacher_a}/{leg.subject_a} {leg.slot_a} "
-                    f"↔ {leg.teacher_b}/{leg.subject_b} {leg.slot_b}"
+                    f"調課　{leg.klass or '？班'}｜"
+                    f"{ts(leg.teacher_a, leg.subject_a)} {leg.slot_a} "
+                    f"↔ {ts(leg.teacher_b, leg.subject_b)} {leg.slot_b}"
                 )
             else:
                 out.append(
-                    f"代課　{leg.klass}｜{leg.orig_teacher}/{leg.subject} {leg.slot} "
-                    f"→ {leg.sub_teacher} 代"
+                    f"代課　{leg.klass or '？班'}｜"
+                    f"{ts(leg.orig_teacher, leg.subject)} {leg.slot} → {leg.sub_teacher or '？'} 代"
                 )
         return out
 

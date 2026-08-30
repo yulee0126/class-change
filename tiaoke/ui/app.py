@@ -1,8 +1,4 @@
-"""Flet GUI：事件清單 + 事件編輯 + 腳編輯 + 預覽 + 單鍵雙目標輸出。
-
-視覺細節需在使用者的桌面環境實際跑 `python main.py` 檢視微調。
-邏輯都在 controller.py，已有單元測試。
-"""
+"""Flet GUI。邏輯都在 controller.py（有單元測試），這裡只做畫面。"""
 
 from __future__ import annotations
 
@@ -15,12 +11,71 @@ from ..models import CLASS_SLIP_STYLES, LEAVE_TYPES
 from ..storage import AppSettings
 from .controller import DEFAULT_FORM_NO, AppController
 
-_STYLE_LABELS = {"banner": "橫幅式", "title": "標題式"}
+_STYLE_LABELS = {"banner": "橫幅式（每張單抬頭一整條）", "title": "標題式（抬頭置中）"}
+_HINT = ft.Colors.BLUE_GREY_600
+_FIRST = datetime.date(2020, 1, 1)
+_LAST = datetime.date(2035, 12, 31)
 
 
 def main(page: ft.Page) -> None:
     page.title = "調課代課通知單產生器"
+    page.padding = 12
     AppView(page)
+
+
+def _hint(text: str) -> ft.Text:
+    return ft.Text(text, size=11, color=_HINT)
+
+
+def _section(text: str) -> ft.Text:
+    return ft.Text(text, weight=ft.FontWeight.BOLD, size=15)
+
+
+class _DateField:
+    """可手打、也可按日曆選的日期欄。"""
+
+    def __init__(self, page: ft.Page, label: str, value: datetime.date | None,
+                 on_change=None, width: int = 155) -> None:
+        self.page = page
+        self._on_change = on_change
+        self.field = ft.TextField(
+            label=label, width=width, dense=True,
+            value=roc.format_date_input(value) if value else "",
+            hint_text="2026-08-25 或 115/8/25",
+            on_change=lambda e: self._fire(),
+        )
+        self.control = ft.Row(
+            [self.field,
+             ft.IconButton(ft.Icons.CALENDAR_MONTH, tooltip="開日曆", on_click=self._open)],
+            spacing=0, tight=True)
+
+    def _open(self, _e) -> None:
+        try:
+            cur = self.get() or datetime.date.today()
+        except ValueError:
+            cur = datetime.date.today()
+        dp = ft.DatePicker(value=cur, first_date=_FIRST, last_date=_LAST,
+                           on_change=self._picked)
+        self.page.show_dialog(dp)
+
+    def _picked(self, e) -> None:
+        v = e.control.value
+        if not v:
+            return
+        d = v.date() if hasattr(v, "date") else v
+        self.field.value = roc.format_date_input(d)
+        self.field.update()
+        self._fire()
+
+    def _fire(self) -> None:
+        if self._on_change:
+            self._on_change()
+
+    def get(self) -> datetime.date | None:
+        txt = (self.field.value or "").strip()
+        if not txt:
+            return None
+        return roc.parse_date(txt)
 
 
 class AppView:
@@ -38,35 +93,44 @@ class AppView:
         except Exception:
             pass
 
-        self.status = ft.Text("", color=ft.Colors.BLUE_GREY_700, selectable=True)
-        self.project_path = ft.TextField(label="專案檔（.json）", value=self.settings.last_project,
-                                         dense=True, expand=True)
-
-        self.event_list = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, expand=True)
-        self.editor = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
+        self.status = ft.Text("", color=ft.Colors.BLUE_GREY_800, selectable=True)
+        self.project_path = ft.TextField(hint_text="專案存檔路徑 .json", dense=True,
+                                         value=self.settings.last_project, expand=True)
+        self.event_list = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO)
+        self.editor = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
         self._leg_form: _LegForm | None = None
 
         left = ft.Container(
-            width=260,
+            width=250,
             content=ft.Column([
-                ft.Text("專案", weight=ft.FontWeight.BOLD),
-                self.project_path,
+                ft.Text("調代課單", weight=ft.FontWeight.BOLD, size=16),
+                _hint("一張單 = Excel 裡的一個分頁。\n一次調代課（含好幾筆對調／代課）做成一張。"),
                 ft.Row([
-                    ft.IconButton(ft.Icons.FOLDER_OPEN, tooltip="開啟", on_click=self._on_open_project),
-                    ft.IconButton(ft.Icons.SAVE, tooltip="儲存", on_click=self._on_save_project),
-                    ft.IconButton(ft.Icons.NOTE_ADD, tooltip="新專案", on_click=self._on_new_project),
-                ]),
-                ft.Divider(),
-                ft.Row([
-                    ft.Text("事件", weight=ft.FontWeight.BOLD),
-                    ft.IconButton(ft.Icons.ADD, tooltip="新增", on_click=self._on_new),
-                    ft.IconButton(ft.Icons.CONTENT_COPY, tooltip="複製", on_click=self._on_dup),
-                    ft.IconButton(ft.Icons.DELETE, tooltip="刪除", on_click=self._on_del),
+                    ft.Button("新增一張", icon=ft.Icons.ADD, on_click=self._on_new),
+                    ft.IconButton(ft.Icons.CONTENT_COPY, tooltip="複製這張", on_click=self._on_dup),
+                    ft.IconButton(ft.Icons.DELETE, tooltip="刪除這張", on_click=self._on_del),
                 ]),
                 self.event_list,
                 ft.Divider(),
-                _MasterDataPanel(self.ctl, self.refresh),
-            ], expand=True, scroll=ft.ScrollMode.AUTO),
+                ft.ExpansionTile(
+                    title=ft.Text("進階：專案存檔．常用名單"),
+                    tile_padding=ft.Padding(0, 0, 0, 0),
+                    controls=[
+                        _hint("儲存＝同時存一個 .json（可再編輯）和一個 .xlsx（所有單合在一個 Excel）。"),
+                        self.project_path,
+                        ft.Row([
+                            ft.IconButton(ft.Icons.FOLDER_OPEN, tooltip="開啟 .json", on_click=self._on_open_project),
+                            ft.IconButton(ft.Icons.SAVE, tooltip="儲存（.json + .xlsx）", on_click=self._on_save_project),
+                            ft.IconButton(ft.Icons.NOTE_ADD, tooltip="全部清空重來", on_click=self._on_new_project),
+                        ]),
+                        ft.Button("只匯出全部成一個 Excel", icon=ft.Icons.TABLE_VIEW,
+                                  on_click=self._on_export_all),
+                        ft.Divider(),
+                        _hint("常用的老師／班級／科目，打過就記著（目前僅記錄）。"),
+                        _MasterDataPanel(self.ctl, self.refresh),
+                    ],
+                ),
+            ], scroll=ft.ScrollMode.AUTO),
         )
         page.add(
             ft.Row([left, ft.VerticalDivider(), self.editor], expand=True),
@@ -75,54 +139,9 @@ class AppView:
         )
         self.refresh()
 
-    # ---- 專案 ---------------------------------------------------
-    def _on_new_project(self, _e) -> None:
-        self.ctl.new_project()
-        self.project_path.value = ""
-        self._leg_form = None
-        self._set_status("已開新專案。")
-        self.refresh()
-
-    def _on_open_project(self, _e) -> None:
-        path = (self.project_path.value or "").strip()
-        try:
-            self.ctl.load_project(path)
-        except (OSError, ValueError) as exc:
-            self._set_status(f"開啟失敗：{exc}")
-            return
-        self.settings.note_recent(path)
-        self.settings.save()
-        self._leg_form = None
-        self._set_status(f"已開啟 {path}")
-        self.refresh()
-
-    def _on_save_project(self, _e) -> None:
-        path = (self.project_path.value or "").strip()
-        if not path:
-            self._set_status("請先在「專案檔」欄輸入要儲存的路徑。")
-            return
-        try:
-            saved = self.ctl.save_project(path)
-        except OSError as exc:
-            self._set_status(f"儲存失敗：{exc}")
-            return
-        self.project_path.value = saved
-        self.settings.note_recent(saved)
-        self.settings.save()
-        self._set_status(f"已儲存 {saved}")
-        self.refresh()
-
-    def _on_window_close(self, _e) -> None:
-        try:
-            self.settings.window_width = int(self.page.window.width)
-            self.settings.window_height = int(self.page.window.height)
-            if self.ctl.project.master_path:
-                self.settings.default_master_path = self.ctl.project.master_path
-            self.settings.save()
-        except Exception:
-            pass
-
-    # ---- 重新繪製 --------------------------------------------------
+    # ==================================================================
+    # 繪製
+    # ==================================================================
     def refresh(self) -> None:
         self._render_event_list()
         self._render_editor()
@@ -132,114 +151,153 @@ class AppView:
         self.event_list.controls.clear()
         titles = self.ctl.event_titles()
         if not titles:
-            self.event_list.controls.append(ft.Text("（尚無事件，按「新增」）", italic=True))
+            self.event_list.controls.append(_hint("（還沒有，按上面「新增一張」）"))
         for i, t in enumerate(titles):
-            selected = i == self.ctl.current_index
-            self.event_list.controls.append(
-                ft.Button(
-                    t or f"事件 {i + 1}",
-                    on_click=lambda e, idx=i: self._select(idx),
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.BLUE_100 if selected else None,
-                    ),
-                )
-            )
+            sel = i == self.ctl.current_index
+            self.event_list.controls.append(ft.Button(
+                t or f"第 {i + 1} 張",
+                on_click=lambda e, idx=i: self._select(idx),
+                style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_100 if sel else None),
+            ))
 
     def _render_editor(self) -> None:
         self.editor.controls.clear()
         ev = self.ctl.current
         if ev is None:
-            self.editor.controls.append(ft.Text("請先新增或選取一個事件。"))
+            self.editor.controls.append(ft.Container(
+                padding=16, content=ft.Column([
+                    ft.Text("還沒有調代課單", weight=ft.FontWeight.BOLD),
+                    ft.Text("點左邊「新增一張」開始。"),
+                ])))
             return
 
-        # --- 事件欄位 ---
-        f_orig = ft.TextField(label="發起教師", value=ev.originator, width=160,
+        self.editor.controls.append(_guide_card())
+
+        # ---------- 1. 基本資料 ----------
+        self.editor.controls.append(_section("① 基本資料"))
+        f_orig = ft.TextField(label="發起教師", value=ev.originator, width=170,
                               on_change=lambda e: self._set(originator=e.control.value))
-        f_leave = ft.RadioGroup(
-            value=ev.leave_type,
-            content=ft.Row([ft.Radio(value=x, label=x) for x in LEAVE_TYPES], wrap=True),
-            on_change=lambda e: self._set(leave_type=e.control.value))
-        f_form = ft.TextField(label="假單編號", value=ev.form_no or DEFAULT_FORM_NO, width=180,
+        f_form = ft.TextField(label="假單編號", value=ev.form_no or DEFAULT_FORM_NO, width=190,
                               on_change=lambda e: self._set(form_no=e.control.value))
-        f_ann = ft.TextField(label="公告日期", value=roc.format_date_input(ev.announce_date),
-                             width=140, hint_text="2026-08-25 或 115/8/25",
-                             on_change=lambda e: self._set_date("announce", e.control.value))
-        f_sheet = ft.TextField(
-            label="分頁日期（可空）", width=160, hint_text="空＝取最早腳日期",
-            value=roc.format_date_input(ev.sheet_date) if ev.sheet_date else "",
-            on_change=lambda e: self._set_date("sheet", e.control.value))
-        f_name = ft.TextField(label="分頁名稱（可空＝自動）", width=220,
-                              value=ev.sheet_name_override or "",
-                              hint_text=ev.sheet_name,
-                              on_change=lambda e: self._set(sheet_name_override=e.control.value))
-        f_style = ft.RadioGroup(
-            value=ev.class_slip_style,
-            content=ft.Row([ft.Radio(value=s, label=_STYLE_LABELS[s]) for s in CLASS_SLIP_STYLES]),
-            on_change=lambda e: self._set(class_slip_style=e.control.value))
+        self._ann_date = _DateField(self.page, "公告日期", ev.announce_date,
+                                    on_change=lambda: self._pull_ann_date())
+        self.editor.controls.append(ft.Row([f_orig, f_form, self._ann_date.control], wrap=True))
+        self.editor.controls.append(_hint(
+            "發起教師＝因為誰請假／要調課而發起這次異動（通知單抬頭會出現，也會自動帶進下面的甲老師／原老師）。\n"
+            "假單編號＝請假系統的單號，自己打，例如「手動+1076」「2015+手動」。\n"
+            "公告日期＝通知單「公告日期」欄要印的日期。"))
 
-        self.editor.controls.append(ft.Text("事件資料", weight=ft.FontWeight.BOLD))
-        self.editor.controls.append(ft.Row([f_orig, f_form, f_ann], wrap=True))
-        self.editor.controls.append(ft.Row([ft.Text("假別："), f_leave], wrap=True))
-        self.editor.controls.append(ft.Row([f_sheet, f_name], wrap=True))
-        self.editor.controls.append(ft.Row([ft.Text("班級單樣式："), f_style]))
+        # 假別：常用選項 + 可自訂
+        custom_leave = "" if ev.leave_type in LEAVE_TYPES else ev.leave_type
+        rg_leave = ft.RadioGroup(
+            value=ev.leave_type if ev.leave_type in LEAVE_TYPES else None,
+            content=ft.Row([ft.Radio(value=x, label=x) for x in LEAVE_TYPES], wrap=True),
+            on_change=lambda e: self._set_leave(e.control.value))
+        tf_leave = ft.TextField(label="或自行輸入假別", width=200, value=custom_leave, dense=True,
+                                on_change=lambda e: self._set_leave(e.control.value, custom=True))
+        self.editor.controls.append(ft.Row([ft.Text("假別："), rg_leave], wrap=True))
+        self.editor.controls.append(ft.Row([tf_leave]))
 
-        # --- 說明 ---
-        self.note_field = ft.TextField(
-            label="說明（產生於每張通知單末端；空＝不產生）",
-            value=ev.note, multiline=True, min_lines=2, max_lines=6, expand=True,
-            on_change=lambda e: self._set(note=e.control.value))
+        self._sheet_date = _DateField(self.page, "分頁日期（可空）", ev.sheet_date,
+                                      on_change=self._pull_sheet_date, width=150)
+        self.editor.controls.append(ft.ExpansionTile(
+            title=ft.Text("進階設定（分頁名稱、班級單樣式）", size=12),
+            tile_padding=ft.Padding(0, 0, 0, 0),
+            controls=[
+                _hint(f"不填的話分頁名稱自動＝「{ev.sheet_name}」（發起教師末兩字＋民國年月日）。"),
+                ft.Row([
+                    self._sheet_date.control,
+                    ft.TextField(label="分頁名稱（可空＝自動）", width=230,
+                                 value=ev.sheet_name_override or "", hint_text=ev.sheet_name,
+                                 on_change=lambda e: self._set(sheet_name_override=e.control.value)),
+                ], wrap=True),
+                ft.Row([
+                    ft.Text("班級單抬頭："),
+                    ft.RadioGroup(value=ev.class_slip_style,
+                                  content=ft.Column([ft.Radio(value=s, label=_STYLE_LABELS[s])
+                                                     for s in CLASS_SLIP_STYLES]),
+                                  on_change=lambda e: self._set(class_slip_style=e.control.value)),
+                ]),
+            ],
+        ))
+
+        # ---------- 2. 異動明細 ----------
         self.editor.controls.append(ft.Divider())
+        self.editor.controls.append(_section("② 這次有哪些對調／代課"))
+        self.editor.controls.append(_hint(
+            "調課＝兩位老師在同一個班、各挪一節課互換。\n"
+            "代課＝某位老師某一節不能上，找人代（時間不變）。\n"
+            "一張單可以加很多筆；同一位老師出現多次會併在同一張通知單。"))
         self.editor.controls.append(ft.Row([
-            ft.Text("說明", weight=ft.FontWeight.BOLD),
-            ft.Button("產生草稿", icon=ft.Icons.AUTO_FIX_HIGH, on_click=self._on_note_draft),
+            ft.Button("＋ 新增調課", icon=ft.Icons.SWAP_HORIZ,
+                      on_click=lambda e: self._open_leg_form("swap")),
+            ft.Button("＋ 新增代課", icon=ft.Icons.PERSON_ADD_ALT,
+                      on_click=lambda e: self._open_leg_form("sub")),
         ]))
-        self.editor.controls.append(self.note_field)
-
-        # --- 腳清單 ---
-        self.editor.controls.append(ft.Divider())
-        self.editor.controls.append(ft.Row([
-            ft.Text("調課／代課腳", weight=ft.FontWeight.BOLD),
-            ft.Button("新增調課", icon=ft.Icons.SWAP_HORIZ, on_click=lambda e: self._open_leg_form("swap")),
-            ft.Button("新增代課", icon=ft.Icons.PERSON_ADD, on_click=lambda e: self._open_leg_form("sub")),
-        ]))
-        for i, summary in enumerate(self.ctl.leg_summaries()):
+        summaries = self.ctl.leg_summaries()
+        if not summaries:
+            self.editor.controls.append(_hint("（還沒加，先按上面兩顆按鈕）"))
+        for i, summary in enumerate(summaries):
+            editing = self._leg_form is not None and self._leg_form.edit_index == i
             self.editor.controls.append(ft.Row([
-                ft.IconButton(ft.Icons.DELETE_OUTLINE, tooltip="刪除",
+                ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="修改這筆", icon_size=18,
+                              on_click=lambda e, idx=i: self._open_leg_form(None, idx)),
+                ft.IconButton(ft.Icons.DELETE_OUTLINE, tooltip="刪除這筆", icon_size=18,
                               on_click=lambda e, idx=i: self._remove_leg(idx)),
-                ft.Text(summary, selectable=True),
+                ft.Text(("✏ " if editing else "") + summary, selectable=True),
             ]))
         if self._leg_form is not None:
             self.editor.controls.append(self._leg_form)
 
-        # --- 預覽 ---
+        # ---------- 3. 說明 ----------
         self.editor.controls.append(ft.Divider())
-        self.editor.controls.append(ft.Text("預覽", weight=ft.FontWeight.BOLD))
+        self.editor.controls.append(ft.Row([
+            _section("③ 說明（選填）"),
+            ft.Button("自動產生草稿", icon=ft.Icons.AUTO_FIX_HIGH, on_click=self._on_note_draft),
+        ], wrap=True))
+        self.note_field = ft.TextField(
+            value=ev.note, multiline=True, min_lines=2, max_lines=6, expand=True,
+            hint_text="會印在每張通知單最下面。留空就不印。",
+            on_change=lambda e: self._set(note=e.control.value))
+        self.editor.controls.append(self.note_field)
+
+        # ---------- 預覽 ----------
+        self.editor.controls.append(ft.Divider())
+        self.editor.controls.append(_section("預覽（會產生這些通知單）"))
         pv = self.ctl.preview()
         if pv.problems:
-            self.editor.controls.append(
-                ft.Text("⚠ " + "；".join(pv.problems), color=ft.Colors.ORANGE_800))
+            self.editor.controls.append(ft.Container(
+                bgcolor=ft.Colors.ORANGE_50, padding=8, border_radius=6,
+                content=ft.Text("要補：" + "；".join(pv.problems), color=ft.Colors.ORANGE_900)))
         if pv.slips:
             self.editor.controls.append(ft.Text(
-                f"共 {pv.teacher_count} 張教師單、{pv.class_count} 張班級單"))
-            for s in pv.slips:
-                self.editor.controls.append(ft.Text(f"　· {s.kind}　{s.title}（{s.row_count} 列）"))
+                f"共 {pv.teacher_count} 張教師通知單、{pv.class_count} 張班級通知單"))
+            self.editor.controls.append(ft.Text(
+                "　" + "　".join(f"{s.title}（{s.row_count}列）" for s in pv.slips),
+                size=12, color=_HINT))
 
-        # --- 輸出 ---
+        # ---------- 4. 產生 ----------
         self.editor.controls.append(ft.Divider())
-        self.editor.controls.append(ft.Text("輸出", weight=ft.FontWeight.BOLD))
-        self.cb_master = ft.Checkbox(label="寫入總表（同名工作表會覆蓋）", value=bool(self.ctl.project.master_path))
-        self.tf_master = ft.TextField(label="總表路徑", value=self.ctl.project.master_path,
-                                      expand=True, hint_text=r"C:\...\115-1手動調代課-兼課.xlsx")
-        self.cb_new = ft.Checkbox(label="另存新檔", value=True)
-        self.tf_new = ft.TextField(label="另存路徑", value=self.ctl.default_new_path(), expand=True)
-        self.editor.controls.append(ft.Row([self.cb_master, self.tf_master]))
+        self.editor.controls.append(_section("④ 產生 Excel"))
+        self.cb_new = ft.Checkbox(label="另存成一個新檔", value=True)
+        self.tf_new = ft.TextField(label="新檔存到", value=self.ctl.default_new_path(),
+                                   expand=True, dense=True)
+        self.cb_master = ft.Checkbox(label="也寫進學期總表（同分頁會被覆蓋更新）",
+                                     value=bool(self.ctl.project.master_path))
+        self.tf_master = ft.TextField(label="總表檔", value=self.ctl.project.master_path,
+                                      expand=True, dense=True,
+                                      hint_text=r"例：C:\...\115-1手動調代課-兼課.xlsx")
         self.editor.controls.append(ft.Row([self.cb_new, self.tf_new]))
-        self.editor.controls.append(
-            ft.Button("產生通知單", icon=ft.Icons.DESCRIPTION,
-                      on_click=self._on_generate,
-                      style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_600, color=ft.Colors.WHITE)))
+        self.editor.controls.append(ft.Row([self.cb_master, self.tf_master]))
+        self.editor.controls.append(_hint("兩個可以同時勾。至少勾一個。"))
+        self.editor.controls.append(ft.Button(
+            "產生 Excel", icon=ft.Icons.TABLE_VIEW, height=44,
+            on_click=self._on_generate,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_600, color=ft.Colors.WHITE)))
 
-    # ---- 事件處理 ----------------------------------------------
+    # ==================================================================
+    # 事件處理
+    # ==================================================================
     def _select(self, idx: int) -> None:
         self.ctl.select_event(idx)
         self._leg_form = None
@@ -261,54 +319,79 @@ class AppView:
 
     def _set(self, **kwargs) -> None:
         self.ctl.update_event_fields(**kwargs)
-        self._render_event_list()          # 分頁名稱可能變
+        self._render_event_list()
         self.page.update()
 
-    def _set_date(self, which: str, text: str) -> None:
-        text = (text or "").strip()
+    def _set_leave(self, value: str, custom: bool = False) -> None:
+        value = (value or "").strip()
+        if not value:
+            return
+        self.ctl.update_event_fields(leave_type=value)
+        if custom:
+            self.refresh()  # 讓 radio 取消選取
+
+    def _pull_ann_date(self) -> None:
         try:
-            if which == "sheet" and not text:
-                self.ctl.update_event_fields(sheet_date=None)
-            elif which == "sheet":
-                self.ctl.update_event_fields(sheet_date=roc.parse_date(text))
-            else:
-                self.ctl.update_event_fields(announce_date=roc.parse_date(text))
+            d = self._ann_date.get()
+            if d:
+                self.ctl.update_event_fields(announce_date=d)
+                self._set_status("")
+        except ValueError as exc:
+            self._set_status(f"公告日期看不懂：{exc}")
+        self._render_event_list()
+        self.page.update()
+
+    def _pull_sheet_date(self) -> None:
+        try:
+            self.ctl.update_event_fields(sheet_date=self._sheet_date.get())
             self._set_status("")
         except ValueError as exc:
-            self._set_status(f"日期格式錯誤：{exc}")
+            self._set_status(f"分頁日期看不懂：{exc}")
         self._render_event_list()
         self.page.update()
 
     def _on_note_draft(self, _e) -> None:
-        draft = self.ctl.make_note_draft()
-        self.ctl.update_event_fields(note=draft)
-        self.note_field.value = draft
+        self.ctl.update_event_fields(note=self.ctl.make_note_draft())
         self.refresh()
 
     def _remove_leg(self, idx: int) -> None:
+        if self._leg_form is not None and self._leg_form.edit_index == idx:
+            self._leg_form = None
         self.ctl.remove_leg(idx)
         self.refresh()
 
-    def _open_leg_form(self, kind: str) -> None:
-        self._leg_form = _LegForm(kind, self._submit_leg, self._cancel_leg,
-                                  self.ctl.project)
+    def _open_leg_form(self, kind: str | None, edit_index: int | None = None) -> None:
+        if self.ctl.current is None:
+            self.ctl.new_event()
+        initial = None
+        if edit_index is not None:
+            initial = self.ctl.leg_form_data(edit_index)
+            if initial is None:
+                return
+            kind = initial["kind"]
+        self._leg_form = _LegForm(
+            self.page, kind, self._submit_leg, self._cancel_leg,
+            originator=self.ctl.current.originator,
+            initial=initial, edit_index=edit_index)
         self.refresh()
 
     def _cancel_leg(self) -> None:
         self._leg_form = None
         self.refresh()
 
-    def _submit_leg(self, kind: str, data: dict) -> None:
+    def _submit_leg(self, kind: str, data: dict, edit_index: int | None) -> None:
         try:
-            if kind == "swap":
+            if edit_index is not None:
+                self.ctl.update_leg(edit_index, kind, **data)
+            elif kind == "swap":
                 self.ctl.add_swap_leg(**data)
             else:
                 self.ctl.add_sub_leg(**data)
         except (ValueError, KeyError) as exc:
-            self._set_status(f"新增失敗：{exc}")
+            self._set_status(f"存不進去：{exc}")
             return
         self._leg_form = None
-        self._set_status("已新增一腳。")
+        self._set_status("已更新一筆。" if edit_index is not None else "已加入一筆。")
         self.refresh()
 
     def _on_generate(self, _e) -> None:
@@ -323,69 +406,172 @@ class AppView:
             return
         lines = []
         for r in results:
+            tag = "總表" if r.target == "master" else "新檔"
             if r.ok:
-                extra = "（已覆蓋舊工作表）" if r.replaced_sheet else ""
-                lines.append(f"✓ {'總表' if r.target == 'master' else '新檔'}：{r.path} {extra}")
+                extra = "（已更新既有分頁）" if r.replaced_sheet else ""
+                lines.append(f"✓ {tag}：{r.path} {extra}")
             else:
-                lines.append(f"✗ {'總表' if r.target == 'master' else '新檔'}：{r.error}")
+                lines.append(f"✗ {tag}：{r.error}")
         if self.ctl.project.master_path:
             self.settings.default_master_path = self.ctl.project.master_path
             self.settings.save()
         self._set_status("\n".join(lines))
         self.refresh()
 
+    def _on_new_project(self, _e) -> None:
+        self.ctl.new_project()
+        self.project_path.value = ""
+        self._leg_form = None
+        self._set_status("已清空。")
+        self.refresh()
+
+    def _on_open_project(self, _e) -> None:
+        path = (self.project_path.value or "").strip()
+        try:
+            self.ctl.load_project(path)
+        except (OSError, ValueError) as exc:
+            self._set_status(f"開啟失敗：{exc}")
+            return
+        self.settings.note_recent(path)
+        self.settings.save()
+        self._leg_form = None
+        self._set_status(f"已開啟 {path}")
+        self.refresh()
+
+    def _on_save_project(self, _e) -> None:
+        path = (self.project_path.value or "").strip()
+        if not path:
+            self._set_status("先在上面欄位打一個路徑（副檔名可省略）。")
+            return
+        try:
+            saved = self.ctl.save_project(path)
+        except OSError as exc:
+            self._set_status(f"儲存失敗：{exc}")
+            return
+        xlsx = saved[:-5] + ".xlsx"
+        r = self.ctl.export_all_xlsx(xlsx)
+        self.project_path.value = saved
+        self.settings.note_recent(saved)
+        self.settings.save()
+        msg = f"已儲存：\n{saved}"
+        msg += f"\n{r.path}" if r.ok else f"\n（Excel 匯出失敗：{r.error}）"
+        self._set_status(msg)
+        self.refresh()
+
+    def _on_export_all(self, _e) -> None:
+        path = (self.project_path.value or "").strip()
+        if not path:
+            path = self.ctl.default_new_path()
+        xlsx = (path[:-5] if path.lower().endswith(".json") else path)
+        r = self.ctl.export_all_xlsx(xlsx if xlsx.lower().endswith(".xlsx") else xlsx + ".xlsx")
+        self._set_status(f"✓ 已匯出 {r.path}" if r.ok else f"✗ {r.error}")
+        self.refresh()
+
+    def _on_window_close(self, _e) -> None:
+        try:
+            self.settings.window_width = int(self.page.window.width)
+            self.settings.window_height = int(self.page.window.height)
+            if self.ctl.project.master_path:
+                self.settings.default_master_path = self.ctl.project.master_path
+            self.settings.save()
+        except Exception:
+            pass
+
     def _set_status(self, text: str) -> None:
         self.status.value = text
         self.page.update()
 
 
-class _LegForm(ft.Container):
-    """新增一腳的內嵌表單。"""
+# ======================================================================
+# 小元件
+# ======================================================================
 
-    def __init__(self, kind: str, on_submit, on_cancel, project) -> None:
-        super().__init__(bgcolor=ft.Colors.BLUE_GREY_50, padding=10, border_radius=6)
+def _labeled(label: str, control: ft.Control) -> ft.Control:
+    return ft.Column([ft.Text(label, size=11, color=_HINT), control], spacing=1, tight=True)
+
+
+def _period_dd(value) -> ft.Dropdown:
+    v = str(value) if value not in (None, "", 0) else None
+    return ft.Dropdown(
+        label="節次", width=85, value=v,
+        options=[ft.DropdownOption(str(i)) for i in range(1, 11)])
+
+
+def _guide_card() -> ft.Control:
+    return ft.Container(
+        bgcolor=ft.Colors.BLUE_50, padding=12, border_radius=8,
+        content=ft.Column([
+            ft.Text("怎麼用", weight=ft.FontWeight.BOLD),
+            ft.Text("① 填基本資料（誰發起、假別、假單編號、公告日期）"),
+            ft.Text("② 按「新增調課／新增代課」，把每一筆異動加進來（可再修改）"),
+            ft.Text("③ 需要的話寫幾句說明（可按「自動產生草稿」）"),
+            ft.Text("④ 看預覽沒問題 → 按「產生 Excel」"),
+        ], spacing=2),
+    )
+
+
+class _LegForm(ft.Container):
+    """新增／修改一筆調課或代課的內嵌表單。"""
+
+    def __init__(self, page, kind: str, on_submit, on_cancel, *,
+                 originator: str = "", initial: dict | None = None,
+                 edit_index: int | None = None) -> None:
+        super().__init__(bgcolor=ft.Colors.BLUE_GREY_50, padding=12, border_radius=8)
         self.kind = kind
+        self.edit_index = edit_index
         self._on_submit = on_submit
         self._on_cancel = on_cancel
+        ini = initial or {}
+        today = datetime.date.today()
+        editing = edit_index is not None
 
-        def tf(label, w=120):
-            return ft.TextField(label=label, width=w, dense=True)
+        def tf(label, w=120, value=""):
+            return ft.TextField(label=label, width=w, value=str(value or ""), dense=True)
 
-        self.klass = tf("班級")
-        today = roc.format_date_input(datetime.date.today())
+        self.klass = tf("班級", 110, ini.get("klass"))
 
         if kind == "swap":
-            self.ta = tf("甲老師"); self.sa = tf("甲科目")
-            self.da = tf("甲原日期", 130); self.da.value = today
-            self.pa = tf("甲節次", 70)
-            self.tb = tf("乙老師"); self.sb = tf("乙科目")
-            self.db = tf("乙原日期", 130); self.db.value = today
-            self.pb = tf("乙節次", 70)
-            rows = [
-                ft.Text("新增調課（兩位老師在同一班各一節互換）", weight=ft.FontWeight.BOLD),
+            self.ta = tf("甲老師", 110, ini.get("teacher_a") or originator)
+            self.sa = tf("甲的科目", 130, ini.get("subject_a"))
+            self.da = _DateField(page, "甲原本日期", ini.get("date_a") or today, width=130)
+            self.pa = _period_dd(ini.get("period_a"))
+            self.tb = tf("乙老師", 110, ini.get("teacher_b"))
+            self.sb = tf("乙的科目", 130, ini.get("subject_b"))
+            self.db = _DateField(page, "乙原本日期", ini.get("date_b") or today, width=130)
+            self.pb = _period_dd(ini.get("period_b"))
+            body = [
+                ft.Text(("修改" if editing else "新增") + "調課", weight=ft.FontWeight.BOLD),
+                _hint("甲、乙兩位老師在「同一個班」各挑一節課互換。\n"
+                      "換完：甲改上乙的時段、乙改上甲的時段。"),
                 ft.Row([self.klass], wrap=True),
-                ft.Row([self.ta, self.sa, self.da, self.pa], wrap=True),
-                ft.Row([self.tb, self.sb, self.db, self.pb], wrap=True),
+                ft.Text("甲方（原時段）", size=12, color=_HINT),
+                ft.Row([self.ta, self.sa, self.da.control, self.pa], wrap=True),
+                ft.Text("乙方（原時段）", size=12, color=_HINT),
+                ft.Row([self.tb, self.sb, self.db.control, self.pb], wrap=True),
             ]
         else:
-            self.ot = tf("原老師"); self.subj = tf("科目")
-            self.dd = tf("日期", 130); self.dd.value = today
-            self.pp = tf("節次", 70)
-            self.st = tf("代課老師")
-            self.from_swap = ft.Checkbox(label="此節原為調課調入（反白＋J欄簡稱）", value=False)
-            rows = [
-                ft.Text("新增代課（時段不動，換人上）", weight=ft.FontWeight.BOLD),
-                ft.Row([self.klass, self.ot, self.subj, self.dd, self.pp, self.st], wrap=True),
+            self.ot = tf("原老師", 110, ini.get("orig_teacher") or originator)
+            self.subj = tf("科目", 130, ini.get("subject"))
+            self.dd = _DateField(page, "日期", ini.get("date") or today, width=130)
+            self.pp = _period_dd(ini.get("period"))
+            self.st = tf("代課老師", 110, ini.get("sub_teacher"))
+            self.from_swap = ft.Checkbox(
+                label="這一節是前面「調課」調進來、之後又請假的（會反白標示）",
+                value=bool(ini.get("from_swap")))
+            body = [
+                ft.Text(("修改" if editing else "新增") + "代課", weight=ft.FontWeight.BOLD),
+                _hint("某位老師某一節不能上，找人代，時間不變。"),
+                ft.Row([self.klass, self.ot, self.subj, self.dd.control, self.pp, self.st], wrap=True),
                 self.from_swap,
             ]
 
         self.err = ft.Text("", color=ft.Colors.RED_700)
-        rows.append(self.err)
-        rows.append(ft.Row([
-            ft.Button("加入", icon=ft.Icons.CHECK, on_click=self._submit),
+        body.append(self.err)
+        body.append(ft.Row([
+            ft.Button("更新" if editing else "加入", icon=ft.Icons.CHECK, on_click=self._submit),
             ft.TextButton("取消", on_click=lambda e: self._on_cancel()),
         ]))
-        self.content = ft.Column(rows, spacing=8, tight=True)
+        self.content = ft.Column(body, spacing=8, tight=True)
 
     def _submit(self, _e) -> None:
         try:
@@ -393,27 +579,41 @@ class _LegForm(ft.Container):
                 data = dict(
                     klass=self.klass.value or "",
                     teacher_a=self.ta.value or "", subject_a=self.sa.value or "",
-                    date_a=roc.parse_date(self.da.value or ""), period_a=int(self.pa.value or 0),
+                    date_a=self._req(self.da), period_a=self._period(self.pa, "甲節次"),
                     teacher_b=self.tb.value or "", subject_b=self.sb.value or "",
-                    date_b=roc.parse_date(self.db.value or ""), period_b=int(self.pb.value or 0),
+                    date_b=self._req(self.db), period_b=self._period(self.pb, "乙節次"),
                 )
             else:
                 data = dict(
                     klass=self.klass.value or "",
                     orig_teacher=self.ot.value or "", subject=self.subj.value or "",
-                    date=roc.parse_date(self.dd.value or ""), period=int(self.pp.value or 0),
+                    date=self._req(self.dd), period=self._period(self.pp, "節次"),
                     sub_teacher=self.st.value or "",
                     from_swap=bool(self.from_swap.value),
                 )
         except ValueError as exc:
-            self.err.value = f"日期／節次格式錯誤：{exc}"
+            self.err.value = str(exc)
             self.err.update()
             return
-        self._on_submit(self.kind, data)
+        self._on_submit(self.kind, data, self.edit_index)
+
+    @staticmethod
+    def _req(df: "_DateField") -> datetime.date:
+        d = df.get()
+        if d is None:
+            raise ValueError("日期沒填")
+        return d
+
+    @staticmethod
+    def _period(dd: ft.Dropdown, label: str) -> int:
+        s = str(dd.value or "").strip()
+        if not s.isdigit():
+            raise ValueError(f"請選{label}")
+        return int(s)
 
 
 class _MasterDataPanel(ft.Column):
-    """左側主檔維護：教師／班級／科目 清單。"""
+    """常用名單維護：教師／班級／科目。"""
 
     _KINDS = [("teacher", "教師"), ("class", "班級"), ("subject", "科目")]
 
@@ -421,15 +621,14 @@ class _MasterDataPanel(ft.Column):
         super().__init__(spacing=4, tight=True)
         self.ctl = ctl
         self.on_change = on_change
-        self.controls.append(ft.Text("主檔", weight=ft.FontWeight.BOLD))
         self._bodies: dict[str, ft.Column] = {}
         for kind, label in self._KINDS:
-            field = ft.TextField(label=f"新增{label}", dense=True, expand=True)
-            body = ft.Column(spacing=1, tight=True)
+            field = ft.TextField(hint_text=f"新增{label}", dense=True, expand=True)
+            body = ft.Column(spacing=0, tight=True)
             self._bodies[kind] = body
             self.controls.append(ft.Row([
                 field,
-                ft.IconButton(ft.Icons.ADD_CIRCLE_OUTLINE,
+                ft.IconButton(ft.Icons.ADD_CIRCLE_OUTLINE, icon_size=18,
                               on_click=lambda e, k=kind, f=field: self._add(k, f)),
             ]))
             self.controls.append(body)
@@ -446,10 +645,10 @@ class _MasterDataPanel(ft.Column):
             body.controls.clear()
             for name in self._lists(kind):
                 body.controls.append(ft.Row([
-                    ft.IconButton(ft.Icons.CLOSE, icon_size=14,
+                    ft.IconButton(ft.Icons.CLOSE, icon_size=13,
                                   on_click=lambda e, k=kind, n=name: self._remove(k, n)),
                     ft.Text(name, size=12),
-                ], tight=True))
+                ], tight=True, spacing=2))
 
     def _add(self, kind: str, field: ft.TextField) -> None:
         self.ctl.add_master(kind, field.value or "")

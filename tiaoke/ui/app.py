@@ -509,6 +509,52 @@ def _period_dd(value) -> ft.Dropdown:
         options=[ft.DropdownOption(str(i)) for i in range(1, 11)])
 
 
+class _NameField:
+    """老師姓名輸入框：邊打邊從名單過濾出建議，點一下帶入；名單沒有的也能直接打。"""
+
+    def __init__(self, label: str, value: str, names: list[str], width: int = 110,
+                 on_change=None) -> None:
+        self.names = names
+        self._extra = on_change
+        self.field = ft.TextField(label=label, width=width, value=str(value or ""),
+                                  dense=True, on_change=self._typed)
+        self.sug = ft.Row(wrap=True, spacing=3, run_spacing=2)
+        self.control = ft.Column([self.field, self.sug], spacing=1, tight=True)
+
+    @property
+    def value(self) -> str:
+        return self.field.value or ""
+
+    def _typed(self, _e=None) -> None:
+        self._rebuild()
+        _safe_update(self.sug)
+        if self._extra:
+            self._extra()
+
+    def _rebuild(self) -> None:
+        q = (self.field.value or "").strip()
+        ctrls: list = []
+        if q and q not in self.names:
+            for n in [x for x in self.names if q in x][:8]:
+                ctrls.append(ft.TextButton(n, on_click=lambda e, n=n: self._pick(n)))
+        self.sug.controls = ctrls
+
+    def _pick(self, name: str) -> None:
+        self.field.value = name
+        self.sug.controls = []
+        _safe_update(self.field)
+        _safe_update(self.sug)
+        if self._extra:
+            self._extra()
+
+
+def _safe_update(ctrl) -> None:
+    try:
+        ctrl.update()
+    except Exception:
+        pass
+
+
 def _guide_card() -> ft.Control:
     return ft.Container(
         bgcolor=ft.Colors.BLUE_50, padding=12, border_radius=8,
@@ -538,23 +584,25 @@ class _LegForm(ft.Container):
         today = datetime.date.today()
         editing = edit_index is not None
 
-        def tf(label, w=120, value="", on_change=None):
-            return ft.TextField(label=label, width=w, value=str(value or ""),
-                                dense=True, on_change=on_change)
+        def tf(label, w=120, value=""):
+            return ft.TextField(label=label, width=w, value=str(value or ""), dense=True)
+
+        names = self._teacher_names()
+
+        def nf(label, value):
+            return _NameField(label, value, names, 110, on_change=self._sync)
 
         self.klass = tf("班級", 110, ini.get("klass"))
         self.pick_a = ft.Column(spacing=2, tight=True)
         self.pick_b = ft.Column(spacing=2, tight=True)
 
         if kind == "swap":
-            self.ta = tf("甲老師", 110, ini.get("teacher_a") or originator,
-                         on_change=lambda e: self._sync())
+            self.ta = nf("甲老師", ini.get("teacher_a") or originator)
             self.sa = tf("甲的科目", 130, ini.get("subject_a"))
             self.da = _DateField(page, "甲原本日期", ini.get("date_a") or today, width=130,
                                  on_change=self._sync)
             self.pa = _period_dd(ini.get("period_a"))
-            self.tb = tf("乙老師", 110, ini.get("teacher_b"),
-                         on_change=lambda e: self._sync())
+            self.tb = nf("乙老師", ini.get("teacher_b"))
             self.sb = tf("乙的科目", 130, ini.get("subject_b"))
             self.db = _DateField(page, "乙原本日期", ini.get("date_b") or today, width=130,
                                  on_change=self._sync)
@@ -565,27 +613,30 @@ class _LegForm(ft.Container):
                       "換完：甲改上乙的時段、乙改上甲的時段。"),
                 ft.Row([self.klass], wrap=True),
                 ft.Text("甲方（原時段）", size=12, color=_HINT),
-                ft.Row([self.ta, self.sa, self.da.control, self.pa], wrap=True),
+                ft.Row([self.ta.control, self.sa, self.da.control, self.pa], wrap=True,
+                       vertical_alignment=ft.CrossAxisAlignment.START),
                 self.pick_a,
                 ft.Text("乙方（原時段）", size=12, color=_HINT),
-                ft.Row([self.tb, self.sb, self.db.control, self.pb], wrap=True),
+                ft.Row([self.tb.control, self.sb, self.db.control, self.pb], wrap=True,
+                       vertical_alignment=ft.CrossAxisAlignment.START),
                 self.pick_b,
             ]
         else:
-            self.ot = tf("原老師", 110, ini.get("orig_teacher") or originator,
-                         on_change=lambda e: self._sync())
+            self.ot = nf("原老師", ini.get("orig_teacher") or originator)
             self.subj = tf("科目", 130, ini.get("subject"))
             self.dd = _DateField(page, "日期", ini.get("date") or today, width=130,
                                  on_change=self._sync)
             self.pp = _period_dd(ini.get("period"))
-            self.st = tf("代課老師", 110, ini.get("sub_teacher"))
+            self.st = nf("代課老師", ini.get("sub_teacher"))
             self.from_swap = ft.Checkbox(
                 label="這一節是前面「調課」調進來、之後又請假的（會反白標示）",
                 value=bool(ini.get("from_swap")))
             body = [
                 ft.Text(("修改" if editing else "新增") + "代課", weight=ft.FontWeight.BOLD),
                 _hint("某位老師某一節不能上，找人代，時間不變。"),
-                ft.Row([self.klass, self.ot, self.subj, self.dd.control, self.pp, self.st], wrap=True),
+                ft.Row([self.klass, self.ot.control, self.subj, self.dd.control, self.pp,
+                        self.st.control], wrap=True,
+                       vertical_alignment=ft.CrossAxisAlignment.START),
                 self.pick_a,
                 self.from_swap,
             ]
@@ -598,6 +649,13 @@ class _LegForm(ft.Container):
         ]))
         self.content = ft.Column(body, spacing=8, tight=True)
         self._fill_picks()
+
+    def _teacher_names(self) -> list[str]:
+        if self.ctl is None:
+            return []
+        names = set(self.ctl.timetable_teacher_names())
+        names.update(self.ctl.project.teachers)
+        return sorted(names)
 
     # ---- 課表帶入 ----
     def _sync(self, *_a) -> None:

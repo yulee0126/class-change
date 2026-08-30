@@ -10,7 +10,7 @@ import datetime
 import os
 from dataclasses import dataclass, field
 
-from .. import models, note_draft, output, storage
+from .. import models, note_draft, output, record, storage
 from ..builder import ClassSlip, TeacherSlip, build, validate
 from ..models import (CLASS_SLIP_STYLES, LEAVE_TYPES, Event, Project, Slot,
                       SubLeg, SwapLeg)
@@ -64,6 +64,8 @@ class AppController:
         self.project_path: str = ""
         self.timetable = None          # tiaoke.timetable.Timetable | None
         self._pending_tt = None
+        self.record_folder: str = ""
+        self.last_record: record.RecordReport | None = None
         if self.project.events:
             self.current_index = 0
 
@@ -408,11 +410,15 @@ class AppController:
             raise ValueError("請先修正：\n- " + "\n- ".join(problems))
         if to_master and master_path:
             self.project.master_path = master_path
-        return output.run(
+        results = output.run(
             ev,
             to_master=to_master, master_path=master_path,
             save_new=save_new, dest_path=dest_path,
         )
+        self.last_record = None
+        if self.record_folder and any(r.ok for r in results):
+            self.last_record = record.update_record(self.record_folder, ev, self.timetable)
+        return results
 
     # ---- 內部 -------------------------------------------------
     def _require_event(self) -> Event:

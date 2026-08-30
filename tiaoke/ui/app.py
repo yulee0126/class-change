@@ -107,6 +107,12 @@ class AppView:
             except Exception:
                 pass
 
+        if not self.settings.record_folder:
+            guess = os.path.normpath(os.path.join(os.getcwd(), "..", "record"))
+            self.settings.record_folder = guess if os.path.isdir(guess) else os.path.join(
+                os.getcwd(), "record")
+        self.ctl.record_folder = self.settings.record_folder
+
         try:
             page.window.width = self.settings.window_width
             page.window.height = self.settings.window_height
@@ -127,6 +133,9 @@ class AppView:
                 pass
         self.project_path = ft.TextField(hint_text="資料庫 .json", dense=True,
                                          value=self.settings.last_project, expand=True)
+        self.record_folder = ft.TextField(
+            label="記錄檔資料夾", dense=True, value=self.settings.record_folder,
+            on_change=self._on_record_folder_change)
         self.event_list = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO)
         self.editor = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
         self._leg_form: _LegForm | None = None
@@ -156,6 +165,10 @@ class AppView:
                         ]),
                         ft.Button("只匯出全部成一個 Excel", icon=ft.Icons.TABLE_VIEW,
                                   on_click=self._on_export_all),
+                        ft.Divider(),
+                        _hint("每次產生 Excel 時，會把代課／調課明細同步寫進這個資料夾裡的\n"
+                              "「{學期}調代課記錄.xlsx」（每學期一個檔）。"),
+                        self.record_folder,
                         ft.Divider(),
                         _TimetableImport(self.ctl, self.settings, self._on_tt_changed),
                         ft.Divider(),
@@ -462,6 +475,13 @@ class AppView:
             self.settings.default_master_path = self.ctl.project.master_path
             self.settings.save()
 
+        rec = self.ctl.last_record
+        if rec is not None:
+            if rec.ok:
+                ok_lines.append(f"✓ 記錄檔（{rec}）\n{rec.path}")
+            else:
+                err_lines.append(f"✗ {rec}")
+
         title = "已產生 Excel" if ok_lines and not err_lines else (
             "部分未成功" if ok_lines else "產生失敗")
         self._show_dialog(title, ok_lines + err_lines)
@@ -540,6 +560,12 @@ class AppView:
     def _on_tt_changed(self, msg: str) -> None:
         self._set_status(msg)
         self.refresh()
+
+    def _on_record_folder_change(self, e) -> None:
+        folder = (e.control.value or "").strip()
+        self.ctl.record_folder = folder
+        self.settings.record_folder = folder
+        self.settings.save()
 
     def _on_export_all(self, _e) -> None:
         path = (self.project_path.value or "").strip()

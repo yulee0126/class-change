@@ -93,10 +93,17 @@ class Event:
     # --- 衍生 ---
     @property
     def effective_sheet_date(self) -> datetime.date:
+        """分頁名稱用的日期：優先取第一筆調課「甲方原本日期」，
+        其次第一筆代課日期，最後才用公告日期。"""
         if self.sheet_date is not None:
             return self.sheet_date
-        ds = [d for leg in self.legs for d in leg.dates()]
-        return min(ds) if ds else self.announce_date
+        for leg in self.legs:
+            if isinstance(leg, SwapLeg):
+                return leg.slot_a.date
+        for leg in self.legs:
+            if isinstance(leg, SubLeg):
+                return leg.slot.date
+        return self.announce_date
 
     @property
     def sheet_name(self) -> str:

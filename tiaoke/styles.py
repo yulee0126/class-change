@@ -10,10 +10,10 @@ FONT_NAME = "標楷體"
 BODY_SIZE = 12
 TITLE_SIZE = 18
 
-# 欄寬取自範例檔「範例1」分頁
+# 欄寬取自範例檔「範例1」分頁（原始精確值）
 COL_WIDTHS = {
-    "A": 12.27, "B": 9.0, "C": 6.91, "D": 7.0, "E": 13.0,
-    "F": 8.63, "G": 6.09, "H": 6.63, "I": 17.91,
+    "A": 12.26953125, "B": 9.0, "C": 6.90625, "D": 7.0, "E": 13.0,
+    "F": 8.6328125, "G": 6.08984375, "H": 6.6328125, "I": 17.90625,
 }
 # 列高取自「範例1」：橫幅列 25、教師單資料列 34、班級單資料列 ~22
 TITLE_ROW_H = 25.0
@@ -93,4 +93,5 @@ def outline_grid(ws: Worksheet, cell_range: str) -> None:
 
 def set_col_widths(ws: Worksheet) -> None:
     for col, width in COL_WIDTHS.items():
+        # 指定 width 後 openpyxl 的 customWidth 會自動回報 True
         ws.column_dimensions[col].width = width

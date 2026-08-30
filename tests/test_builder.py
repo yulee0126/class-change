@@ -85,3 +85,20 @@ def test_validate_flags_bad_period_and_same_slot():
 
 def test_validate_clean_event_has_no_messages():
     assert validate(samples.get("瑞文1150223")) == []
+
+
+def test_sheet_date_defaults_to_swap_teacher_a_date():
+    ev = Event("陳若耶", "公假", "手動", D(2026, 2, 20), legs=[
+        SwapLeg("高三甲", "陳若耶", "國語文", Slot(D(2026, 2, 26), 5),
+                "蔡文華", "公民", Slot(D(2026, 2, 25), 5)),
+    ])
+    # 取甲方原本日期 2/26，不是最早的 2/25
+    assert ev.effective_sheet_date == D(2026, 2, 26)
+    assert ev.sheet_name == "若耶1150226"
+
+
+def test_sheet_date_falls_back_to_sub_date():
+    ev = Event("吳建勳", "公假", "手動", D(2022, 1, 10), legs=[
+        SubLeg("工三", "吳建勳", "食品", Slot(D(2022, 1, 19), 4), "謝欣瑜"),
+    ])
+    assert ev.effective_sheet_date == D(2022, 1, 19)

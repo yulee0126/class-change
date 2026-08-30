@@ -26,9 +26,9 @@ def _find(ws, text):
 def test_sheet_basic_shape():
     ws = _render(samples.get("瑞文1150223"))
     assert ws.title == "瑞文1150223"
-    # 欄寬取自「範例1」
-    assert ws.column_dimensions["I"].width == pytest.approx(17.91)
-    assert ws.column_dimensions["A"].width == pytest.approx(12.27)
+    # 欄寬取自「範例1」原始值
+    assert ws.column_dimensions["I"].width == pytest.approx(17.90625)
+    assert ws.column_dimensions["A"].width == pytest.approx(12.26953125)
     assert ws.column_dimensions["E"].width == pytest.approx(13.0)
     assert ws.print_area in ("A1:I%d" % ws.max_row, "'瑞文1150223'!$A$1:$I$%d" % ws.max_row)
 

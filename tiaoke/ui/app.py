@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 
 import flet as ft
 
@@ -55,17 +56,31 @@ class _DateField:
             cur = self.get() or datetime.date.today()
         except ValueError:
             cur = datetime.date.today()
-        dp = ft.DatePicker(value=cur, first_date=_FIRST, last_date=_LAST,
-                           on_change=self._picked)
-        self.page.show_dialog(dp)
+        self._dp = ft.DatePicker(
+            value=datetime.datetime(cur.year, cur.month, cur.day, 12),
+            first_date=datetime.datetime(_FIRST.year, _FIRST.month, _FIRST.day),
+            last_date=datetime.datetime(_LAST.year, _LAST.month, _LAST.day),
+            on_change=self._picked, on_dismiss=self._close)
+        try:
+            self.page.show_dialog(self._dp)
+        except Exception:
+            self.page.overlay.append(self._dp)
+            self._dp.open = True
+            self.page.update()
+
+    def _close(self, *_a) -> None:
+        try:
+            self.page.pop_dialog()
+        except Exception:
+            pass
 
     def _picked(self, e) -> None:
-        v = e.control.value
-        if not v:
+        d = _event_date(e)
+        self._close()
+        if d is None:
             return
-        d = v.date() if hasattr(v, "date") else v
         self.field.value = roc.format_date_input(d)
-        self.field.update()
+        _safe_update(self.field)
         self._fire()
 
     def _fire(self) -> None:
@@ -573,6 +588,29 @@ def _safe_update(ctrl) -> None:
         pass
 
 
+def _event_date(e) -> datetime.date | None:
+    """從 DatePicker on_change 事件安全取出日期。
+
+    優先解析 e.data 的 ISO 字串（不受時區影響）；退而用 e.control.value。
+    DatePicker 以「中午」為預設值開啟，所以就算平台把時間轉成 UTC，
+    ±14 小時仍落在同一天，直接取 .date() 即可。
+    """
+    raw = getattr(e, "data", None)
+    if isinstance(raw, str):
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", raw)
+        if m:
+            try:
+                return datetime.date(int(m[1]), int(m[2]), int(m[3]))
+            except ValueError:
+                pass
+    v = getattr(getattr(e, "control", None), "value", None)
+    if isinstance(v, datetime.datetime):
+        return v.date()
+    if isinstance(v, datetime.date):
+        return v
+    return None
+
+
 def _guide_card() -> ft.Control:
     return ft.Container(
         bgcolor=ft.Colors.BLUE_50, padding=12, border_radius=8,
@@ -701,23 +739,39 @@ class _LegForm(ft.Container):
         if not slots:
             return []
         wd = "一二三四五"[d.weekday()]
+        # 乙方：和甲同一班的課用紅色 highlight，並排前面
+        want = (self.klass.value or "").strip() if (self.kind == "swap" and side == "b") else ""
+        if want:
+            slots = sorted(slots, key=lambda s: s.klass != want)
         row = ft.Row(wrap=True, spacing=4, run_spacing=2)
         for s in slots:
             label = f"第{s.period}節 {s.subject}" + (f"／{s.klass}" if s.klass else "")
-            row.controls.append(ft.OutlinedButton(
-                label, on_click=lambda e, s=s, side=side: self._apply_slot(side, s)))
-        return [ft.Text(f"{teacher} 星期{wd} 的課（點一下帶入）：", size=11, color=_HINT), row]
+            if want and s.klass == want:
+                btn = ft.Button(label, on_click=lambda e, s=s, side=side: self._apply_slot(side, s),
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.RED_100,
+                                                     color=ft.Colors.RED_900))
+            else:
+                btn = ft.OutlinedButton(
+                    label, on_click=lambda e, s=s, side=side: self._apply_slot(side, s))
+            row.controls.append(btn)
+        cap = f"{teacher} 星期{wd} 的課（點一下帶入）"
+        if want:
+            cap += f"；🔴 = 和甲同一班（{want}）"
+        return [ft.Text(cap + "：", size=11, color=_HINT), row]
 
     def _apply_slot(self, side, s) -> None:
         if self.kind == "swap":
             if side == "a":
                 self.sa.value, self.pa.value = s.subject, str(s.period)
+                # 甲定了班級 → 乙方 highlight 依此更新
+                if s.klass:
+                    self.klass.value = s.klass
             else:
                 self.sb.value, self.pb.value = s.subject, str(s.period)
         else:
             self.subj.value, self.pp.value = s.subject, str(s.period)
-        if s.klass:
-            self.klass.value = s.klass
+            if s.klass:
+                self.klass.value = s.klass
         self._sync()
 
     def _submit(self, _e) -> None:

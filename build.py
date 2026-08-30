@@ -69,6 +69,12 @@ def main() -> int:
             if f.endswith((".xlsx", ".md")) and not f.startswith("~$"):
                 shutil.copy2(os.path.join(src_record, f), os.path.join(DIST, "record"))
 
+    # 教師課表 JSON（放 exe 旁邊，程式開機自動載入）
+    for f in os.listdir(PROJECT):
+        if f.endswith(".json") and "課表" in f:
+            shutil.copy2(os.path.join(PROJECT, f), DIST)
+            print(f"  帶入課表：{f}")
+
     readme = os.path.join(DIST, "使用說明.txt")
     if not os.path.exists(readme):
         shutil.copy2(os.path.join(PROJECT, "調課代課產生器", "使用說明.txt"), readme) \

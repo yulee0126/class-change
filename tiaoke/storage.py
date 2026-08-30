@@ -73,15 +73,14 @@ def load_timetable(path: str):
 # --------------------------------------------------------------------------
 
 def _config_dir() -> Path:
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    d = Path(base) / "tiaoke"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from . import paths
+    return Path(os.path.dirname(paths.settings_path()))
 
 
 def default_db_path() -> str:
     """預設的「調代課資料庫」JSON 路徑。"""
-    return str(_config_dir() / "調代課資料庫.json")
+    from . import paths
+    return paths.default_db_path()
 
 
 @dataclass
@@ -98,7 +97,8 @@ class AppSettings:
     # ---- 存讀 ----
     @classmethod
     def path(cls) -> Path:
-        return _config_dir() / "settings.json"
+        from . import paths
+        return Path(paths.settings_path())
 
     @classmethod
     def load(cls) -> "AppSettings":

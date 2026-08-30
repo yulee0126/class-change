@@ -6,10 +6,11 @@ import base64
 import datetime
 import os
 import re
+import sys
 
 import flet as ft
 
-from .. import roc
+from .. import paths, roc
 from ..models import CLASS_SLIP_STYLES, LEAVE_TYPES
 from ..storage import AppSettings
 from .controller import DEFAULT_FORM_NO, AppController
@@ -19,11 +20,12 @@ _HINT = ft.Colors.BLUE_GREY_600
 _FIRST = datetime.date(2020, 1, 1)
 _LAST = datetime.date(2035, 12, 31)
 
-_ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets")
-
-
 def _asset(name: str) -> str:
-    return os.path.join(_ASSETS, name)
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return os.path.join(meipass, "assets", name)
+    root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    return os.path.join(root, "assets", name)
 
 
 def _logo_src() -> str | None:
@@ -119,17 +121,24 @@ class AppView:
         self.page = page
         self.settings = AppSettings.load()
         self.ctl = AppController()
-        if self.settings.timetable_path and os.path.exists(self.settings.timetable_path):
+
+        # 記錄檔資料夾：設定裡有且存在就用它，否則用 exe/專案 旁邊的 record（可攜）
+        rf = self.settings.record_folder
+        if not rf or not os.path.isdir(rf):
+            rf = paths.record_dir()
+        self.settings.record_folder = rf
+        self.ctl.record_folder = rf
+
+        # 課表：設定裡的檔在就載入，否則試 exe 旁邊 bundle 的課表 JSON
+        tt_path = self.settings.timetable_path
+        if not tt_path or not os.path.exists(tt_path):
+            tt_path = paths.default_timetable_path()
+        if tt_path and os.path.exists(tt_path):
             try:
-                self.ctl.load_timetable(self.settings.timetable_path)
+                self.ctl.load_timetable(tt_path)
+                self.settings.timetable_path = tt_path
             except Exception:
                 pass
-
-        if not self.settings.record_folder:
-            guess = os.path.normpath(os.path.join(os.getcwd(), "..", "record"))
-            self.settings.record_folder = guess if os.path.isdir(guess) else os.path.join(
-                os.getcwd(), "record")
-        self.ctl.record_folder = self.settings.record_folder
 
         try:
             page.window.width = self.settings.window_width
@@ -140,10 +149,11 @@ class AppView:
 
         self.status = ft.Text("", color=ft.Colors.BLUE_GREY_800, selectable=True)
 
-        # 預設一個「資料庫」JSON；存在就開機自動載入
-        from ..storage import default_db_path
-        if not self.settings.last_project:
-            self.settings.last_project = default_db_path()
+        # 預設一個「資料庫」JSON；存在就開機自動載入。路徑失效（換電腦）就回退到可攜預設。
+        if not self.settings.last_project or not (
+                os.path.exists(self.settings.last_project)
+                or os.path.isdir(os.path.dirname(self.settings.last_project) or ".")):
+            self.settings.last_project = paths.default_db_path()
         if os.path.exists(self.settings.last_project):
             try:
                 self.ctl.load_project(self.settings.last_project)

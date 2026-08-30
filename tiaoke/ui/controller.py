@@ -169,12 +169,14 @@ class AppController:
         self._learn_names(klass, [teacher_a, teacher_b], [subject_a, subject_b])
 
     def add_sub_leg(self, *, klass: str, orig_teacher: str, subject: str,
-                    date: datetime.date, period: int, sub_teacher: str) -> None:
+                    date: datetime.date, period: int, sub_teacher: str,
+                    from_swap: bool = False) -> None:
         ev = self._require_event()
         ev.legs.append(SubLeg(
             klass=klass.strip(),
             orig_teacher=orig_teacher.strip(), subject=subject.strip(),
             slot=Slot(date, int(period)), sub_teacher=sub_teacher.strip(),
+            from_swap=from_swap,
         ))
         self._learn_names(klass, [orig_teacher, sub_teacher], [subject])
 

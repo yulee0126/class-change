@@ -372,9 +372,11 @@ class _LegForm(ft.Container):
             self.dd = tf("日期", 130); self.dd.value = today
             self.pp = tf("節次", 70)
             self.st = tf("代課老師")
+            self.from_swap = ft.Checkbox(label="此節原為調課調入（反白＋J欄簡稱）", value=False)
             rows = [
                 ft.Text("新增代課（時段不動，換人上）", weight=ft.FontWeight.BOLD),
                 ft.Row([self.klass, self.ot, self.subj, self.dd, self.pp, self.st], wrap=True),
+                self.from_swap,
             ]
 
         self.err = ft.Text("", color=ft.Colors.RED_700)
@@ -401,6 +403,7 @@ class _LegForm(ft.Container):
                     orig_teacher=self.ot.value or "", subject=self.subj.value or "",
                     date=roc.parse_date(self.dd.value or ""), period=int(self.pp.value or 0),
                     sub_teacher=self.st.value or "",
+                    from_swap=bool(self.from_swap.value),
                 )
         except ValueError as exc:
             self.err.value = f"日期／節次格式錯誤：{exc}"

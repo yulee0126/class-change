@@ -72,17 +72,26 @@ def _teacher_slip(ws: Worksheet, r: int, slip: TeacherSlip, event: Event) -> int
     first_data = r
     for row in slip.rows:
         ws.row_dimensions[r].height = DATA_ROW_H
-        put(ws, f"A{r}", row.klass, align=CENTER_WRAP)
+        fill = styles.HIGHLIGHT_FILL if row.highlight else None
+        put(ws, f"A{r}", row.klass, align=CENTER_WRAP, fill=fill)
         if row.new is not None:
-            put(ws, f"B{r}", row.new.date, align=CENTER, fmt=DATE_FMT)
-            put(ws, f"C{r}", row.new.weekday_cn, align=CENTER)
-            put(ws, f"D{r}", str(row.new.period), align=CENTER)
+            put(ws, f"B{r}", row.new.date, align=CENTER, fmt=DATE_FMT, fill=fill)
+            put(ws, f"C{r}", row.new.weekday_cn, align=CENTER, fill=fill)
+            put(ws, f"D{r}", str(row.new.period), align=CENTER, fill=fill)
+        else:
+            for col in "BCD":
+                put(ws, f"{col}{r}", None, fill=fill)
         if row.orig is not None:
-            put(ws, f"F{r}", row.orig.date, align=CENTER, fmt=DATE_FMT)
-            put(ws, f"G{r}", row.orig.weekday_cn, align=CENTER)
-            put(ws, f"H{r}", str(row.orig.period), align=CENTER)
-        put(ws, f"E{r}", row.subject, align=CENTER)
-        put(ws, f"I{r}", row.note, align=LEFT_WRAP)
+            put(ws, f"F{r}", row.orig.date, align=CENTER, fmt=DATE_FMT, fill=fill)
+            put(ws, f"G{r}", row.orig.weekday_cn, align=CENTER, fill=fill)
+            put(ws, f"H{r}", str(row.orig.period), align=CENTER, fill=fill)
+        else:
+            for col in "FGH":
+                put(ws, f"{col}{r}", None, fill=fill)
+        put(ws, f"E{r}", row.subject, align=CENTER, fill=fill)
+        put(ws, f"I{r}", row.note, align=LEFT_WRAP, fill=fill)
+        if row.short:
+            put(ws, f"J{r}", row.short, font=body_font(color="FFFF0000"), align=LEFT)
         r += 1
     last_data = r - 1
 
@@ -129,11 +138,15 @@ def _class_slip(ws: Worksheet, r: int, slip: ClassSlip, event: Event) -> int:
     first_data = r
     for row in slip.rows:
         ws.row_dimensions[r].height = DATA_ROW_H
-        put(ws, f"B{r}", row.slot.date, align=CENTER, fmt=DATE_FMT)
-        put(ws, f"C{r}", row.slot.weekday_cn, align=CENTER)
-        put(ws, f"D{r}", str(row.slot.period), align=CENTER)
-        put(ws, f"E{r}", row.subject, align=CENTER)
-        put(ws, f"F{r}", row.note, align=LEFT_WRAP)
+        fill = styles.HIGHLIGHT_FILL if getattr(row, "highlight", False) else None
+        put(ws, f"B{r}", row.slot.date, align=CENTER, fmt=DATE_FMT, fill=fill)
+        put(ws, f"C{r}", row.slot.weekday_cn, align=CENTER, fill=fill)
+        put(ws, f"D{r}", str(row.slot.period), align=CENTER, fill=fill)
+        put(ws, f"E{r}", row.subject, align=CENTER, fill=fill)
+        put(ws, f"F{r}", row.note, align=LEFT_WRAP, fill=fill)
+        if fill:
+            for col in "GHI":
+                put(ws, f"{col}{r}", None, fill=fill)
         r += 1
     last_data = r - 1
 

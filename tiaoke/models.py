@@ -51,13 +51,18 @@ class SwapLeg:
 
 @dataclass
 class SubLeg:
-    """代課腳：原老師某節請人代課，時段不動。"""
+    """代課腳：原老師某節請人代課，時段不動。
+
+    from_swap=True 表示這一節原本是「調課調入」的時段（發起人先把課調進來、
+    之後又請假），教師單會反白標示並在 J 欄放代課老師簡稱（對照 炆明1150831）。
+    """
 
     klass: str
     orig_teacher: str
     subject: str
     slot: Slot
     sub_teacher: str
+    from_swap: bool = False
 
     kind: str = field(default="sub", init=False)
 
@@ -168,6 +173,7 @@ def leg_to_dict(leg: Leg) -> dict:
         "subject": leg.subject,
         "slot": _slot_to_dict(leg.slot),
         "sub_teacher": leg.sub_teacher,
+        "from_swap": leg.from_swap,
     }
 
 
@@ -184,6 +190,7 @@ def leg_from_dict(d: dict) -> Leg:
         subject=d["subject"],
         slot=_slot_from_dict(d["slot"]),
         sub_teacher=d["sub_teacher"],
+        from_swap=d.get("from_swap", False),
     )
 
 

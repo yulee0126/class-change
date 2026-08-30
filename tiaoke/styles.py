@@ -36,7 +36,8 @@ LEFT_WRAP = Alignment(horizontal="left", vertical="center", wrap_text=True)
 RIGHT = Alignment(horizontal="right", vertical="center")
 NOTE_ALIGN = Alignment(vertical="center", wrap_text=True)
 
-HIGHLIGHT_FILL = PatternFill("solid", fgColor="FFFF00")
+# 「先調後代」列的反白（淡金色，列印仍清楚）
+HIGHLIGHT_FILL = PatternFill("solid", fgColor="FFF2CC")
 
 
 def body_font(bold: bool = False, color: str | None = None) -> Font:

@@ -20,6 +20,8 @@ class TeacherRow:
     subject: str
     orig: Slot | None
     note: str
+    highlight: bool = False
+    short: str | None = None   # J 欄代課老師簡稱（紅字）
 
 
 @dataclass
@@ -29,6 +31,7 @@ class ClassRow:
     slot: Slot
     subject: str
     note: str
+    highlight: bool = False
 
 
 @dataclass
@@ -80,17 +83,19 @@ def build(event: Event) -> list[Slip]:
                 note=f"調課(原{_bare(leg.teacher_b)}老師/{leg.subject_b})",
             ))
         elif isinstance(leg, SubLeg):
+            hl = leg.from_swap
             tr(leg.orig_teacher).append(TeacherRow(
                 klass=leg.klass, new=None, subject=leg.subject, orig=leg.slot,
                 note=f"{_bare(leg.sub_teacher)}老師 代課",
+                highlight=hl, short=_short(leg.sub_teacher) if hl else None,
             ))
             tr(leg.sub_teacher).append(TeacherRow(
                 klass=leg.klass, new=leg.slot, subject=leg.subject, orig=None,
-                note=f"代 {_bare(leg.orig_teacher)}老師",
+                note=f"代 {_bare(leg.orig_teacher)}老師", highlight=hl,
             ))
             cr(leg.klass).append(ClassRow(
                 slot=leg.slot, subject=leg.subject,
-                note=f"{_bare(leg.sub_teacher)}老師 代課",
+                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl,
             ))
         else:  # pragma: no cover - 防呆
             raise TypeError(f"未知的腳型別：{type(leg)!r}")
@@ -115,6 +120,12 @@ def _bare(name: str) -> str:
     """移除結尾的「老師」，避免重複。"""
     name = name.strip()
     return name[:-2] if name.endswith("老師") else name
+
+
+def _short(name: str) -> str:
+    """代課老師簡稱：末兩字。"""
+    n = _bare(name)
+    return n[-2:] if len(n) >= 2 else n
 
 
 # --------------------------------------------------------------------------

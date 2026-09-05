@@ -3,6 +3,7 @@ import datetime
 import pytest
 
 from tiaoke import samples
+from tiaoke import timetable as tt_mod
 from tiaoke.builder import ClassSlip, TeacherSlip, build, validate
 from tiaoke.models import Event, Slot, SubLeg, SwapLeg
 
@@ -15,6 +16,15 @@ def _teacher(slips, name):
 
 def _klass(slips, name):
     return next(s for s in slips if isinstance(s, ClassSlip) and s.klass == name)
+
+
+def _timetable_with_note(weekday: int, period: int, note: str, teacher="余瑞文"):
+    table = tt_mod.Timetable()
+    table.teachers[teacher] = tt_mod.TeacherTable(name=teacher, slots=[
+        tt_mod.Slot(weekday=weekday, period=period, subject="健康與護理",
+                    klass="電機一", note=note),
+    ])
+    return table
 
 
 def test_swap_expands_to_two_teacher_slips_and_one_class_slip():
@@ -41,6 +51,55 @@ def test_swap_expands_to_two_teacher_slips_and_one_class_slip():
     assert crows[0].subject == "班、週會"
     assert crows[0].note == "調課(原余瑞文老師/健康與護理)"
     assert crows[1].note == "調課(原洪瑞霞老師/班、週會)"
+
+
+def test_sub_leg_marks_extra_hours_on_all_three_slips():
+    # 2026-09-07 是星期一（weekday=1）
+    ev = Event("余瑞文", "病假", "手動", D(2026, 9, 3), legs=[
+        SubLeg("電機一", "余瑞文", "健康與護理", Slot(D(2026, 9, 7), 1), "王小明"),
+    ])
+    slips = build(ev, timetable=_timetable_with_note(1, 1, "(兼)"))
+    assert _teacher(slips, "余瑞文").rows[0].mark == "兼課"
+    assert _teacher(slips, "王小明").rows[0].mark == "兼課"
+    assert _klass(slips, "電機一").rows[0].mark == "兼課"
+
+
+def test_sub_leg_marks_period8():
+    ev = Event("余瑞文", "病假", "手動", D(2026, 9, 3), legs=[
+        SubLeg("電機一", "余瑞文", "專業輔導", Slot(D(2026, 9, 7), 8), "王小明"),
+    ])
+    slips = build(ev, timetable=_timetable_with_note(1, 8, "(輔)"))
+    assert _teacher(slips, "余瑞文").rows[0].mark == "八"
+
+
+def test_sub_leg_marks_both_when_extra_hours_and_period8():
+    ev = Event("余瑞文", "病假", "手動", D(2026, 9, 3), legs=[
+        SubLeg("電機一", "余瑞文", "健康與護理", Slot(D(2026, 9, 7), 8), "王小明"),
+    ])
+    slips = build(ev, timetable=_timetable_with_note(1, 8, "(兼)(輔)"))
+    assert _teacher(slips, "余瑞文").rows[0].mark == "兼課、八"
+
+
+def test_sub_leg_no_mark_without_timetable_or_match():
+    ev = Event("余瑞文", "病假", "手動", D(2026, 9, 3), legs=[
+        SubLeg("電機一", "余瑞文", "健康與護理", Slot(D(2026, 9, 7), 1), "王小明"),
+    ])
+    assert _teacher(build(ev), "余瑞文").rows[0].mark == ""
+    # 有課表但那個時段沒有標記
+    assert _teacher(build(ev, timetable=_timetable_with_note(1, 1, "")),
+                    "余瑞文").rows[0].mark == ""
+    # 課表裡是別的節次
+    assert _teacher(build(ev, timetable=_timetable_with_note(1, 2, "(兼)")),
+                    "余瑞文").rows[0].mark == ""
+
+
+def test_swap_leg_is_never_marked():
+    ev = Event("余瑞文", "其他", "手動", D(2026, 2, 13), legs=[
+        SwapLeg("高一甲", "余瑞文", "健康與護理", Slot(D(2026, 2, 23), 1),
+                "洪瑞霞", "班、週會", Slot(D(2026, 2, 25), 5)),
+    ])
+    slips = build(ev, timetable=_timetable_with_note(3, 1, "(兼)"))
+    assert _teacher(slips, "余瑞文").rows[0].mark == ""
 
 
 def test_sub_expands_correctly():

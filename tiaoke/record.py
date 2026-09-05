@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from openpyxl import Workbook, load_workbook
 
 from . import roc
+from .builder import lookup_tags
 from .models import Event, SubLeg, SwapLeg
 
 DETAIL_SHEET = "調代課明細"
@@ -25,8 +26,8 @@ DETAIL_HEADERS = [
     "節次", "班級", "授課科目", "原教師", "原教師編號", "實際授課教師", "實際教師編號",
     "型態", "公告日期", "代課別", "鐘點費", "備註",
 ]
-STATS_HEADERS = ["月份", "教師", "教師編號", "代課堂數", "被代堂數", "調課堂數",
-                 "代課日期（民國）"]
+STATS_HEADERS = ["月份", "教師", "教師編號", "代課堂數", "代課(兼課)堂數", "代課(第八節)堂數",
+                 "被代堂數", "調課堂數", "代課日期（民國）"]
 
 _DATE_FMT = "yyyy/mm/dd"
 
@@ -93,13 +94,22 @@ def event_to_rows(event: Event, timetable=None, ts: str | None = None) -> list[l
     ts = ts or datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     rows: list[list] = []
 
-    def row(kind, d, period, klass, subject, orig, actual, mode, note=""):
+    def row(kind, d, period, klass, subject, orig, actual, mode, note="", sub_type=""):
         return [
             ts, event.sheet_name, event.form_no, event.leave_type, event.originator,
             kind, d, roc.weekday_cn(d), int(period), klass, subject,
             orig, _tid(timetable, orig), actual, _tid(timetable, actual),
-            mode, event.announce_date, "", "", note,
+            mode, event.announce_date, sub_type, "", note,
         ]
+
+    def _sub_type(leg: SubLeg) -> str:
+        is_extra, is_period8 = lookup_tags(timetable, leg.orig_teacher, leg.slot)
+        tags = []
+        if is_extra:
+            tags.append("兼課")
+        if is_period8:
+            tags.append("第八節")
+        return "、".join(tags)
 
     for leg in event.legs:
         if isinstance(leg, SubLeg):
@@ -107,6 +117,7 @@ def event_to_rows(event: Event, timetable=None, ts: str | None = None) -> list[l
                 "代課", leg.slot.date, leg.slot.period, leg.klass, leg.subject,
                 leg.orig_teacher, leg.sub_teacher,
                 "先調後代" if leg.from_swap else "單純代課",
+                sub_type=_sub_type(leg),
             ))
         elif isinstance(leg, SwapLeg):
             # 甲換到乙的時段（slot_b）上甲的科目
@@ -254,15 +265,17 @@ def _rebuild_stats(wb: Workbook) -> None:
         ws.append([
             month, teacher, v["tid"],
             f'=COUNTIFS({q}!$F:$F,"代課",{q}!$N:$N,$B{i},{span})',
+            f'=COUNTIFS({q}!$F:$F,"代課",{q}!$N:$N,$B{i},{q}!$R:$R,"*兼課*",{span})',
+            f'=COUNTIFS({q}!$F:$F,"代課",{q}!$N:$N,$B{i},{q}!$R:$R,"*第八節*",{span})',
             f'=COUNTIFS({q}!$F:$F,"代課",{q}!$L:$L,$B{i},{span})',
             f'=COUNTIFS({q}!$F:$F,"調課",{q}!$N:$N,$B{i},{span})',
             dates_str,
         ])
 
-    ws["I1"] = "堂數為公式，改「調代課明細」會自動更新；「代課日期（民國）」是產生當下的快照。"
-    ws["I1"].font = _hint_font()
+    ws["K1"] = "堂數為公式，改「調代課明細」會自動更新；「代課(兼課)/(第八節)堂數」統計的是\n代課老師代的那節，原老師課表若標了 (兼)/(輔)；「代課日期（民國）」是產生當下的快照。"
+    ws["K1"].font = _hint_font()
     ws.freeze_panes = "A2"
-    for col, w in {"A": 9, "B": 10, "C": 10, "G": 22}.items():
+    for col, w in {"A": 9, "B": 10, "C": 10, "E": 14, "F": 16, "I": 22}.items():
         ws.column_dimensions[col].width = w
 
 

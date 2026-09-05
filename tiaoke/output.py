@@ -21,16 +21,16 @@ class TargetResult:
     error: str = ""
 
 
-def build_single_workbook(event: Event) -> Workbook:
+def build_single_workbook(event: Event, timetable=None) -> Workbook:
     """只含該事件一張工作表的新活頁簿。"""
     wb = Workbook()
     ws = wb.active
     ws.title = _safe_sheet_title(event.sheet_name)
-    xlsx_writer.write_sheet(ws, event)
+    xlsx_writer.write_sheet(ws, event, timetable)
     return wb
 
 
-def export_all(events: list[Event], dest_path: str) -> TargetResult:
+def export_all(events: list[Event], dest_path: str, timetable=None) -> TargetResult:
     """把多個事件寫進同一個新活頁簿，一個事件一張工作表。"""
     try:
         dest_path = _ensure_xlsx(dest_path)
@@ -41,7 +41,7 @@ def export_all(events: list[Event], dest_path: str) -> TargetResult:
             title = _unique_title(_safe_sheet_title(ev.sheet_name), used)
             used.add(title)
             ws = wb.create_sheet(title=title)
-            xlsx_writer.write_sheet(ws, ev)
+            xlsx_writer.write_sheet(ws, ev, timetable)
         if not wb.sheetnames:
             wb.create_sheet(title="（無事件）")
         wb.save(dest_path)
@@ -67,9 +67,9 @@ def _ensure_xlsx(path: str) -> str:
     return path if path.lower().endswith(".xlsx") else path + ".xlsx"
 
 
-def save_as_new(event: Event, dest_path: str) -> TargetResult:
+def save_as_new(event: Event, dest_path: str, timetable=None) -> TargetResult:
     try:
-        wb = build_single_workbook(event)
+        wb = build_single_workbook(event, timetable)
         last = wb.active.max_row
         wb.save(dest_path)
         return TargetResult("new", dest_path, ok=True, last_row=last)
@@ -77,7 +77,7 @@ def save_as_new(event: Event, dest_path: str) -> TargetResult:
         return TargetResult("new", dest_path, ok=False, error=str(exc))
 
 
-def write_to_master(event: Event, master_path: str) -> TargetResult:
+def write_to_master(event: Event, master_path: str, timetable=None) -> TargetResult:
     name = _safe_sheet_title(event.sheet_name)
     try:
         if os.path.exists(master_path):
@@ -90,7 +90,7 @@ def write_to_master(event: Event, master_path: str) -> TargetResult:
         if replaced:
             del wb[name]
         ws = wb.create_sheet(title=name)
-        last = xlsx_writer.write_sheet(ws, event)
+        last = xlsx_writer.write_sheet(ws, event, timetable)
         wb.save(master_path)
         return TargetResult("master", master_path, ok=True,
                             replaced_sheet=replaced, last_row=last)
@@ -102,7 +102,7 @@ def write_to_master(event: Event, master_path: str) -> TargetResult:
 
 
 def run(event: Event, *, to_master: bool = False, master_path: str = "",
-        save_new: bool = False, dest_path: str = "") -> list[TargetResult]:
+        save_new: bool = False, dest_path: str = "", timetable=None) -> list[TargetResult]:
     """依勾選的目標一次輸出。至少要有一個目標。"""
     if not (to_master or save_new):
         raise ValueError("請至少選擇一個輸出目標（寫入總表／另存新檔）。")
@@ -112,12 +112,12 @@ def run(event: Event, *, to_master: bool = False, master_path: str = "",
         if not master_path:
             results.append(TargetResult("master", "", ok=False, error="未指定總表路徑。"))
         else:
-            results.append(write_to_master(event, master_path))
+            results.append(write_to_master(event, master_path, timetable))
     if save_new:
         if not dest_path:
             results.append(TargetResult("new", "", ok=False, error="未指定另存路徑。"))
         else:
-            results.append(save_as_new(event, dest_path))
+            results.append(save_as_new(event, dest_path, timetable))
     return results
 
 

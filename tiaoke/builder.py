@@ -21,6 +21,7 @@ class TeacherRow:
     orig: Slot | None
     note: str
     highlight: bool = False
+    mark: str = ""          # J 欄註記：原時段若為兼課／第八節（"兼課"、"八"、或兩者用「、」相接）
 
 
 @dataclass
@@ -32,6 +33,7 @@ class ClassRow:
     note: str
     highlight: bool = False
     is_sub: bool = False   # True＝代課列（排在調課列之後）
+    mark: str = ""          # J 欄註記，同 TeacherRow.mark
 
 
 @dataclass
@@ -53,8 +55,13 @@ Slip = TeacherSlip | ClassSlip
 # 展開
 # --------------------------------------------------------------------------
 
-def build(event: Event) -> list[Slip]:
-    """回傳：先教師單（依首次出現順序），後班級單。"""
+def build(event: Event, timetable=None) -> list[Slip]:
+    """回傳：先教師單（依首次出現順序），後班級單。
+
+    timetable 有給的話，代課腳會查「原老師」在原時段的課表標記
+    （P5 解析出的 `(兼)`/`(輔)`），符合的話該筆異動所有相關列
+    （原老師、代課老師、班級單）J 欄都會標「兼課」／「八」。
+    """
     teacher_rows: dict[str, list[TeacherRow]] = {}
     class_rows: dict[str, list[ClassRow]] = {}
 
@@ -85,17 +92,18 @@ def build(event: Event) -> list[Slip]:
             # class rows above are 調課 → is_sub 預設 False
         elif isinstance(leg, SubLeg):
             hl = leg.from_swap
+            mark = _lookup_mark(timetable, leg.orig_teacher, leg.slot)
             tr(leg.orig_teacher).append(TeacherRow(
                 klass=leg.klass, new=None, subject=leg.subject, orig=leg.slot,
-                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl,
+                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl, mark=mark,
             ))
             tr(leg.sub_teacher).append(TeacherRow(
                 klass=leg.klass, new=leg.slot, subject=leg.subject, orig=None,
-                note=f"代 {_bare(leg.orig_teacher)}老師", highlight=hl,
+                note=f"代 {_bare(leg.orig_teacher)}老師", highlight=hl, mark=mark,
             ))
             cr(leg.klass).append(ClassRow(
                 slot=leg.slot, subject=leg.subject,
-                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl, is_sub=True,
+                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl, is_sub=True, mark=mark,
             ))
         else:  # pragma: no cover - 防呆
             raise TypeError(f"未知的腳型別：{type(leg)!r}")
@@ -115,6 +123,36 @@ def _teacher_row_key(row: TeacherRow):
     is_sub = row.new is None or row.orig is None
     primary = row.new or row.orig
     return (is_sub, primary.date, primary.period)
+
+
+def lookup_tags(timetable, teacher: str, slot: Slot) -> tuple[bool, bool]:
+    """查 teacher 在 slot 當下的課表，回傳 (是否兼課, 是否第八節)。
+
+    供 builder（J 欄註記）與 record（明細表「代課別」欄）共用，
+    各自決定要顯示的文字。timetable 沒給或查不到都回傳 (False, False)。
+    """
+    if timetable is None or not teacher:
+        return False, False
+    wd = slot.date.weekday() + 1  # 1=星期一…5=星期五
+    if wd > 5:
+        return False, False
+    for s in timetable.slots_for(teacher.strip(), wd):
+        if s.period != slot.period:
+            continue
+        note = s.note or ""
+        return "(兼)" in note, "(輔)" in note
+    return False, False
+
+
+def _lookup_mark(timetable, teacher: str, slot: Slot) -> str:
+    """原老師在 slot 當下的課表若標了 (兼)/(輔)，回傳「兼課」／「八」（可兩者並列）。"""
+    is_extra, is_period8 = lookup_tags(timetable, teacher, slot)
+    tags: list[str] = []
+    if is_extra:
+        tags.append("兼課")
+    if is_period8:
+        tags.append("八")
+    return "、".join(tags)
 
 
 def _bare(name: str) -> str:

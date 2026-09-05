@@ -3,10 +3,20 @@ import datetime
 import openpyxl
 
 from tiaoke import record, samples
+from tiaoke import timetable as tt_mod
 from tiaoke.models import Event, Slot, SubLeg, SwapLeg
 from tiaoke.ui.controller import AppController
 
 D = datetime.date
+
+
+def _timetable_with_note(weekday: int, period: int, note: str, teacher: str):
+    table = tt_mod.Timetable()
+    table.teachers[teacher] = tt_mod.TeacherTable(name=teacher, slots=[
+        tt_mod.Slot(weekday=weekday, period=period, subject="食品檢驗",
+                    klass="工三", note=note),
+    ])
+    return table
 
 
 def test_semester_and_month_codes():
@@ -29,6 +39,26 @@ def test_sub_leg_makes_one_row():
     assert r[11] == "吳建勳"            # 原教師
     assert r[13] == "謝欣瑜"            # 實際授課教師
     assert r[15] == "單純代課"          # 型態
+    assert r[17] == ""                  # 代課別：沒給課表就空白
+
+
+def test_sub_leg_records_extra_hours_kind():
+    # 2022-01-19 是星期三（weekday=3）
+    ev = Event("吳建勳", "公假", "手動", D(2022, 1, 10), legs=[
+        SubLeg("工三", "吳建勳", "食品檢驗", Slot(D(2022, 1, 19), 4), "謝欣瑜"),
+    ])
+    tt = _timetable_with_note(3, 4, "(兼)", "吳建勳")
+    rows = record.event_to_rows(ev, tt, ts="2026-01-01 00:00")
+    assert rows[0][17] == "兼課"         # 代課別
+
+
+def test_sub_leg_records_period8_kind():
+    ev = Event("吳建勳", "公假", "手動", D(2022, 1, 10), legs=[
+        SubLeg("工三", "吳建勳", "食品檢驗", Slot(D(2022, 1, 19), 8), "謝欣瑜"),
+    ])
+    tt = _timetable_with_note(3, 8, "(輔)", "吳建勳")
+    rows = record.event_to_rows(ev, tt, ts="2026-01-01 00:00")
+    assert rows[0][17] == "第八節"
 
 
 def test_swap_leg_makes_two_rows():
@@ -70,6 +100,18 @@ def test_update_record_file_and_stats(tmp_path):
     f = stats[("115-09", "郭惠茹")][3].value
     assert f.startswith("=COUNTIFS(") and "代課" in f and "$B" in f
     assert "DATE(2026,9,1)" in f and "DATE(2026,10,1)" in f
+    # 代課(兼課)/(第八節)堂數也是 COUNTIFS，多查「代課別」欄
+    f_extra = stats[("115-09", "郭惠茹")][4].value
+    f_p8 = stats[("115-09", "郭惠茹")][5].value
+    assert f_extra.startswith("=COUNTIFS(") and "*兼課*" in f_extra and "$R:$R" in f_extra
+    assert f_p8.startswith("=COUNTIFS(") and "*第八節*" in f_p8 and "$R:$R" in f_p8
+
+
+def test_stats_headers_include_extra_hours_columns():
+    assert record.STATS_HEADERS == [
+        "月份", "教師", "教師編號", "代課堂數", "代課(兼課)堂數", "代課(第八節)堂數",
+        "被代堂數", "調課堂數", "代課日期（民國）",
+    ]
 
 
 def test_stat_keys_dates_are_actual_class_dates():

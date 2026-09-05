@@ -161,7 +161,7 @@ class AppController:
 
     def export_all_xlsx(self, path: str) -> output.TargetResult:
         """把所有事件匯出成一個 Excel（一事件一分頁）。"""
-        return output.export_all(self.project.events, path)
+        return output.export_all(self.project.events, path, self.timetable)
 
     def rebuild_record_stats(self) -> list[record.RecordReport]:
         """重算記錄檔資料夾裡每個「{學期}調代課記錄.xlsx」的月統計。"""
@@ -414,6 +414,7 @@ class AppController:
             ev,
             to_master=to_master, master_path=master_path,
             save_new=save_new, dest_path=dest_path,
+            timetable=self.timetable,
         )
         self.last_record = None
         if self.record_folder and any(r.ok for r in results):

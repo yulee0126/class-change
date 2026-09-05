@@ -26,9 +26,13 @@ def banner_text(event: Event) -> str:
     )
 
 
-def write_sheet(ws: Worksheet, event: Event) -> int:
-    """在 ws 上輸出整個事件。回傳最後一列的列號。"""
-    slips = build(event)
+def write_sheet(ws: Worksheet, event: Event, timetable=None) -> int:
+    """在 ws 上輸出整個事件。回傳最後一列的列號。
+
+    timetable 有給的話，代課列若對應原老師課表標了 (兼)/(輔)，J 欄會加註記
+    （見 builder.build 的 mark 計算）；J 欄不納入列印範圍，純 Excel 內部註記。
+    """
+    slips = build(event, timetable)
     styles.set_col_widths(ws)
 
     r = 1
@@ -91,6 +95,8 @@ def _teacher_slip(ws: Worksheet, r: int, slip: TeacherSlip, event: Event) -> int
                 put(ws, f"{col}{r}", None, fill=fill)
         put(ws, f"E{r}", row.subject, align=CENTER, fill=fill)
         put(ws, f"I{r}", row.note, align=LEFT_WRAP, fill=fill)
+        if row.mark:
+            put(ws, f"J{r}", row.mark, font=styles.mark_font(), align=CENTER, fill=fill)
         r += 1
     last_data = r - 1
 
@@ -145,6 +151,8 @@ def _class_slip(ws: Worksheet, r: int, slip: ClassSlip, event: Event) -> int:
         if fill:
             for col in "GHI":
                 put(ws, f"{col}{r}", None, fill=fill)
+        if row.mark:
+            put(ws, f"J{r}", row.mark, font=styles.mark_font(), align=CENTER, fill=fill)
         r += 1
     last_data = r - 1
 

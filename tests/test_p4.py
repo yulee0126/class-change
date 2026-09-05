@@ -43,11 +43,12 @@ def test_plain_sub_is_not_highlighted():
 
 
 def test_xlsx_has_fill_but_no_j_column():
+    # 沒給課表時 J 欄不輸出任何內容（P6 重新啟用 J 欄是條件式的，
+    # 只在代課節次對到課表 (兼)/(輔) 標記才會寫，見 test_xlsx_writer.py）
     ws = _render(samples.get("炆明1150831"))
     filled = [c.coordinate for row in ws.iter_rows() for c in row
               if c.fill and c.fill.patternType == "solid"]
     assert filled, "應有反白儲存格"
-    # J 欄不輸出任何內容
     assert not [c.value for c in ws["J"] if c.value not in (None, "")]
 
 

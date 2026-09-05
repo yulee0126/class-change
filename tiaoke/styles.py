@@ -52,6 +52,11 @@ def title_font() -> Font:
     return Font(name=FONT_NAME, size=TITLE_SIZE, bold=True)
 
 
+def mark_font() -> Font:
+    """J 欄「兼課」／「八」註記：藍字、標楷、粗體。"""
+    return Font(name=FONT_NAME, size=BODY_SIZE, bold=True, color="0000FF")
+
+
 def box(l=False, r=False, t=False, b=False) -> Border:
     return Border(
         left=_THIN if l else _NONE,

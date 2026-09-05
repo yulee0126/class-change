@@ -177,22 +177,6 @@ class AppController:
         self.project_path = path
         self.current_index = 0 if self.project.events else None
 
-    # ---- 主檔維護 --------------------------------------------------
-    def add_master(self, kind: str, name: str) -> None:
-        name = name.strip()
-        if not name:
-            return
-        target = {"teacher": self.project.teachers, "class": self.project.classes,
-                  "subject": self.project.subjects}[kind]
-        if name not in target:
-            target.append(name)
-
-    def remove_master(self, kind: str, name: str) -> None:
-        target = {"teacher": self.project.teachers, "class": self.project.classes,
-                  "subject": self.project.subjects}[kind]
-        if name in target:
-            target.remove(name)
-
     # ---- 事件清單 ------------------------------------------------------
     @property
     def current(self) -> Event | None:
@@ -241,6 +225,7 @@ class AppController:
     # ---- 事件欄位 ----------------------------------------------------
     def update_event_fields(self, *, originator: str | None = None,
                             leave_type: str | None = None, form_no: str | None = None,
+                            system_form_no: str | None = None,
                             announce_date: datetime.date | None = None,
                             sheet_date: datetime.date | None = ...,  # type: ignore[assignment]
                             note: str | None = None,
@@ -255,6 +240,8 @@ class AppController:
             ev.leave_type = leave_type
         if form_no is not None:
             ev.form_no = form_no
+        if system_form_no is not None:
+            ev.system_form_no = system_form_no
         if announce_date is not None:
             ev.announce_date = announce_date
         if sheet_date is not ...:
@@ -412,7 +399,8 @@ class AppController:
             folder = os.path.dirname(self.record_folder.rstrip("/\\")) or self.record_folder
         else:
             folder = os.getcwd()
-        return os.path.join(folder, f"{ev.sheet_name}.xlsx")
+        stem = f"{ev.system_form_no}-{ev.sheet_name}" if ev.system_form_no.strip() else ev.sheet_name
+        return os.path.join(folder, f"{stem}.xlsx")
 
     def generate(self, *, to_master: bool, save_new: bool,
                  master_path: str = "", dest_path: str = "") -> list[output.TargetResult]:

@@ -82,8 +82,9 @@ class Event:
 
     originator: str                       # 橫幅顯示的發起教師
     leave_type: str                       # 假別
-    form_no: str                          # 假單編號（單一自由文字，預設 "手動+"）
+    form_no: str                          # 假單編號（單一自由文字，預設 "手動+"；印在橫幅上）
     announce_date: datetime.date          # 公告日期
+    system_form_no: str = ""              # 系統假單編號：只用來組輸出檔名，不印在橫幅上
     sheet_date: datetime.date | None = None   # 分頁名稱用日期；None → 取所有腳最早日期
     note: str = ""                        # 說明本文（不含「說明:」前綴）；空則不產生說明列
     class_slip_style: str = "banner"
@@ -206,6 +207,7 @@ def event_to_dict(ev: Event) -> dict:
         "originator": ev.originator,
         "leave_type": ev.leave_type,
         "form_no": ev.form_no,
+        "system_form_no": ev.system_form_no,
         "announce_date": ev.announce_date.isoformat(),
         "sheet_date": ev.sheet_date.isoformat() if ev.sheet_date else None,
         "note": ev.note,
@@ -220,6 +222,7 @@ def event_from_dict(d: dict) -> Event:
         originator=d["originator"],
         leave_type=d["leave_type"],
         form_no=d["form_no"],
+        system_form_no=d.get("system_form_no", ""),
         announce_date=datetime.date.fromisoformat(d["announce_date"]),
         sheet_date=datetime.date.fromisoformat(d["sheet_date"]) if d.get("sheet_date") else None,
         note=d.get("note", ""),

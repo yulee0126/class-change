@@ -1,10 +1,16 @@
 import datetime
 
 from tiaoke import samples, storage
-from tiaoke.models import Project
+from tiaoke.models import Event, Project, event_from_dict, event_to_dict
 from tiaoke.ui.controller import AppController
 
 D = datetime.date
+
+
+def test_system_form_no_round_trips():
+    ev = Event("余瑞文", "其他", "手動+1002", D(2026, 9, 3), system_form_no="1002")
+    back = event_from_dict(event_to_dict(ev))
+    assert back.system_form_no == "1002"
 
 
 def test_project_round_trip(tmp_path):
@@ -85,13 +91,3 @@ def test_settings_load_missing_is_default(tmp_path, monkeypatch):
     s.save()
     s2 = storage.AppSettings.load()
     assert s2.recent_projects and s2.last_project.endswith("a.json")
-
-
-def test_master_data_edit_via_controller():
-    c = AppController()
-    c.add_master("teacher", "王小明")
-    c.add_master("teacher", "王小明")  # 不重複
-    c.add_master("class", "高一甲")
-    assert c.project.teachers == ["王小明"]
-    c.remove_master("teacher", "王小明")
-    assert c.project.teachers == []

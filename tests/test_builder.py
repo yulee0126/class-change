@@ -29,11 +29,11 @@ def test_swap_expands_to_two_teacher_slips_and_one_class_slip():
     assert a.new == Slot(D(2026, 2, 25), 5)      # 調課後 = 對方原時段
     assert a.orig == Slot(D(2026, 2, 23), 1)     # 原時段
     assert a.subject == "健康與護理"
-    assert a.note == "與洪瑞霞老師調課"
+    assert a.note == "與洪瑞霞老師 班、週會 調課"
 
     b = _teacher(slips, "洪瑞霞").rows[0]
     assert b.new == Slot(D(2026, 2, 23), 1)
-    assert b.note == "與余瑞文老師調課"
+    assert b.note == "與余瑞文老師 健康與護理 調課"
 
     crows = _klass(slips, "高一甲").rows
     assert len(crows) == 2

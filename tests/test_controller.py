@@ -89,6 +89,14 @@ def test_default_new_path_uses_sheet_name():
     assert c.default_new_path().endswith("瑞文1150223.xlsx")
 
 
+def test_default_new_path_prefixes_system_form_no():
+    c = AppController()
+    c.new_event()
+    c.update_event_fields(originator="余瑞文", sheet_date=D(2026, 2, 23),
+                          system_form_no="1002")
+    assert c.default_new_path().endswith("1002-瑞文1150223.xlsx")
+
+
 def test_delete_and_select():
     c = AppController()
     a = c.new_event(); c.update_event_fields(originator="甲")

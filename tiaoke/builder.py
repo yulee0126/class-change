@@ -68,11 +68,11 @@ def build(event: Event) -> list[Slip]:
         if isinstance(leg, SwapLeg):
             tr(leg.teacher_a).append(TeacherRow(
                 klass=leg.klass, new=leg.slot_b, subject=leg.subject_a, orig=leg.slot_a,
-                note=f"與{_bare(leg.teacher_b)}老師調課",
+                note=f"與{_bare(leg.teacher_b)}老師 {leg.subject_b} 調課",
             ))
             tr(leg.teacher_b).append(TeacherRow(
                 klass=leg.klass, new=leg.slot_a, subject=leg.subject_b, orig=leg.slot_b,
-                note=f"與{_bare(leg.teacher_a)}老師調課",
+                note=f"與{_bare(leg.teacher_a)}老師 {leg.subject_a} 調課",
             ))
             cr(leg.klass).append(ClassRow(
                 slot=leg.slot_a, subject=leg.subject_b,

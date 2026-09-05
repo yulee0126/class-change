@@ -187,7 +187,7 @@ class AppView:
                 self.event_list,
                 ft.Divider(),
                 ft.ExpansionTile(
-                    title=ft.Text("進階：專案存檔．常用名單"),
+                    title=ft.Text("進階：專案存檔．課表匯入"),
                     tile_padding=ft.Padding(0, 0, 0, 0),
                     controls=[
                         _hint("儲存＝同時存一個 .json（可再編輯）和一個 .xlsx（所有單合在一個 Excel）。"),
@@ -208,9 +208,6 @@ class AppView:
                                   on_click=self._on_rebuild_stats),
                         ft.Divider(),
                         _TimetableImport(self.ctl, self.settings, self._on_tt_changed),
-                        ft.Divider(),
-                        _hint("常用的老師／班級／科目，打過就記著（目前僅記錄）。"),
-                        _MasterDataPanel(self.ctl, self.refresh),
                     ],
                 ),
             ], scroll=ft.ScrollMode.AUTO),
@@ -263,14 +260,17 @@ class AppView:
             on_change=lambda: self._set(originator=self._orig_field.value))
         f_form = ft.TextField(label="假單編號", value=ev.form_no or DEFAULT_FORM_NO, width=190,
                               on_change=lambda e: self._set(form_no=e.control.value))
+        f_sys_form = ft.TextField(label="系統假單編號", value=ev.system_form_no, width=140,
+                                  on_change=lambda e: self._set(system_form_no=e.control.value))
         self._ann_date = _DateField(self.page, "公告日期", ev.announce_date,
                                     on_change=lambda: self._pull_ann_date())
         self.editor.controls.append(ft.Row(
-            [self._orig_field.control, f_form, self._ann_date.control], wrap=True,
+            [self._orig_field.control, f_form, f_sys_form, self._ann_date.control], wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.START))
         self.editor.controls.append(_hint(
             "發起教師＝因為誰請假／要調課而發起這次異動（通知單抬頭會出現，也會自動帶進下面的甲老師／原老師）。\n"
-            "假單編號＝請假系統的單號，自己打，例如「手動+1076」「2015+手動」。\n"
+            "假單編號＝請假系統的單號，自己打，例如「手動+1076」「2015+手動」；會印在通知單橫幅上。\n"
+            "系統假單編號＝只用來組輸出檔名（{系統假單編號}-{分頁名稱}.xlsx），不會印在通知單上，可留空。\n"
             "公告日期＝通知單「公告日期」欄要印的日期。"))
 
         # 假別：常用選項 + 可自訂
@@ -963,56 +963,6 @@ class _LegForm(ft.Container):
         return int(s)
 
 
-class _MasterDataPanel(ft.Column):
-    """常用名單維護：教師／班級／科目。"""
-
-    _KINDS = [("teacher", "教師"), ("class", "班級"), ("subject", "科目")]
-
-    def __init__(self, ctl, on_change) -> None:
-        super().__init__(spacing=4, tight=True)
-        self.ctl = ctl
-        self.on_change = on_change
-        self._bodies: dict[str, ft.Column] = {}
-        for kind, label in self._KINDS:
-            field = ft.TextField(hint_text=f"新增{label}", dense=True, expand=True)
-            body = ft.Column(spacing=0, tight=True)
-            self._bodies[kind] = body
-            self.controls.append(ft.Row([
-                field,
-                ft.IconButton(ft.Icons.ADD_CIRCLE_OUTLINE, icon_size=18,
-                              on_click=lambda e, k=kind, f=field: self._add(k, f)),
-            ]))
-            self.controls.append(body)
-        self._render()
-
-    def _lists(self, kind: str) -> list[str]:
-        return {"teacher": self.ctl.project.teachers,
-                "class": self.ctl.project.classes,
-                "subject": self.ctl.project.subjects}[kind]
-
-    def _render(self) -> None:
-        for kind, _ in self._KINDS:
-            body = self._bodies[kind]
-            body.controls.clear()
-            for name in self._lists(kind):
-                body.controls.append(ft.Row([
-                    ft.IconButton(ft.Icons.CLOSE, icon_size=13,
-                                  on_click=lambda e, k=kind, n=name: self._remove(k, n)),
-                    ft.Text(name, size=12),
-                ], tight=True, spacing=2))
-
-    def _add(self, kind: str, field: ft.TextField) -> None:
-        self.ctl.add_master(kind, field.value or "")
-        field.value = ""
-        self._render()
-        self.on_change()
-
-    def _remove(self, kind: str, name: str) -> None:
-        self.ctl.remove_master(kind, name)
-        self._render()
-        self.on_change()
-
-
 class _TimetableImport(ft.Column):
     """匯入教師課表 PDF → 解析 → 問要不要存 JSON。"""
 
@@ -1058,8 +1008,9 @@ class _TimetableImport(ft.Column):
             self.update()
             return
         m = sum(len(t.slots) for t in tt.teachers.values())
+        default_name = os.path.splitext(os.path.basename(path))[0] + ".json"
         self._json = ft.TextField(label="存成", dense=True, expand=True,
-                                  value=os.path.splitext(path)[0] + ".json")
+                                  value=os.path.join(paths.app_dir(), default_name))
         self.confirm.controls = [
             ft.Text(f"讀到 {len(tt.teachers)} 位老師、{m} 筆課。要存成 JSON 保存嗎？"),
             self._json,

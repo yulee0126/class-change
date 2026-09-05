@@ -12,11 +12,19 @@ def is_frozen() -> bool:
 
 
 def app_dir() -> str:
-    """打包後＝exe 所在資料夾；開發時＝專案上層資料夾（調課代課程式）。"""
+    """打包後＝exe 所在資料夾；開發時＝專案根目錄，若已經跑過 build.py
+    （`build_out/` 存在）就優先用那裡——這樣 `python main.py` 開發時看到的
+    record／調代課單會跟包好的 exe 是同一份，不會憑空多一份。
+
+    舊版這裡往上找三層，在這個 repo 的實際目錄深度下會一路跑到
+    使用者的 Documents 資料夾去（tiaoke/paths.py 只往上兩層就是專案根目錄，
+    不是三層），導致「調代課單資料夾」之類的預設路徑指到一個空資料夾。
+    """
     if is_frozen():
         return os.path.dirname(sys.executable)
-    # tiaoke/paths.py → 上三層 = 調課代課程式
-    return os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    build_out = os.path.join(project_root, "build_out")
+    return build_out if os.path.isdir(build_out) else project_root
 
 
 def record_dir() -> str:

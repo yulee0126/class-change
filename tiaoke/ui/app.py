@@ -158,6 +158,7 @@ class AppView:
         self.slips_folder = ft.TextField(
             label="調代課單資料夾", dense=True, value=sf,
             on_change=self._on_slips_folder_change)
+        self.slip_search = _SlipSearch(self.ctl, self.slips_folder, self._on_file_loaded)
         self.record_folder = ft.TextField(
             label="報表存放資料夾", dense=True, value=self.settings.record_folder,
             on_change=self._on_record_folder_change)
@@ -188,7 +189,7 @@ class AppView:
                     tile_padding=ft.Padding(0, 0, 0, 0),
                     controls=[
                         self.slips_folder,
-                        _SlipSearch(self.ctl, self.slips_folder, self._on_file_loaded),
+                        self.slip_search,
                         ft.Divider(),
                         _hint("掃「調代課單資料夾」內所有檔案，重新算一份記錄檔（帶時間戳記，\n"
                               "不覆蓋舊檔）。檔名前綴 ~~ 的視為作廢，會略過。"),
@@ -633,6 +634,7 @@ class AppView:
     def _on_slips_folder_change(self, e) -> None:
         self.settings.slips_folder = (e.control.value or "").strip()
         self.settings.save()
+        self.slip_search._typed()
 
     def _on_file_loaded(self, msg: str) -> None:
         self._leg_form = None
@@ -1371,7 +1373,8 @@ class _TimetableEditor(ft.Column):
 
         self.controls = [
             ft.Text("課表校對", weight=ft.FontWeight.BOLD),
-            _hint("選老師、選星期 → 逐節核對／修改科目・班級・地點・備註（例如 (兼)、(輔)）。"),
+            _hint("選老師、選星期 → 逐節核對／修改科目・班級・地點・備註（例如 (兼)、(輔)）・\n"
+                  "協同老師（🤝，比對教師配當表得出，也可以手動修正）。"),
             self.teacher.control,
             self.wd_row,
             self.body,
@@ -1410,7 +1413,10 @@ class _TimetableEditor(ft.Column):
         if slots:
             klass = "、".join(s.klass for s in slots if s.klass)
             note = f" {slots[0].note}" if slots[0].note else ""
-            label = f"第{period}節　{slots[0].subject}" + (f"／{klass}" if klass else "") + note
+            co = slots[0].co_teachers
+            co_txt = f"　🤝與{'、'.join(co)}協同" if co else ""
+            label = (f"第{period}節　{slots[0].subject}" + (f"／{klass}" if klass else "")
+                    + note + co_txt)
         else:
             label = f"第{period}節　（空）"
         return ft.Row([
@@ -1430,9 +1436,13 @@ class _TimetableEditor(ft.Column):
                              dense=True, width=120)
         f_note = ft.TextField(label="備註（如 (兼)、(輔)）",
                               value=slots[0].note if slots else "", dense=True, width=160)
+        f_co = ft.TextField(label="協同老師（多人用、分隔，沒有留空）",
+                            value="、".join(slots[0].co_teachers) if slots else "",
+                            dense=True, width=220)
         actions = [
             ft.Button("儲存", icon=ft.Icons.SAVE,
-                      on_click=lambda e: self._save_slot(period, f_subj, f_klass, f_loc, f_note)),
+                      on_click=lambda e: self._save_slot(period, f_subj, f_klass, f_loc,
+                                                         f_note, f_co)),
         ]
         if slots:
             actions.append(ft.TextButton("刪除這節", icon=ft.Icons.DELETE_OUTLINE,
@@ -1443,6 +1453,7 @@ class _TimetableEditor(ft.Column):
             content=ft.Column([
                 ft.Row([f_subj, f_klass], wrap=True),
                 ft.Row([f_loc, f_note], wrap=True),
+                ft.Row([f_co], wrap=True),
                 ft.Row(actions, wrap=True),
             ], spacing=4, tight=True),
         )
@@ -1470,15 +1481,17 @@ class _TimetableEditor(ft.Column):
         self._render_body()
         _safe_update(self)
 
-    def _save_slot(self, period: int, f_subj, f_klass, f_loc, f_note) -> None:
+    def _save_slot(self, period: int, f_subj, f_klass, f_loc, f_note, f_co) -> None:
         name = self.teacher.value.strip()
         if not name:
             return
         klasses = [k for k in re.split(r"[、/／,，]", f_klass.value or "") if k.strip()]
+        co_teachers = [c for c in re.split(r"[、/／,，]", f_co.value or "") if c.strip()]
         self.ctl.edit_timetable_slot(
             name, self.weekday, period,
             subject=f_subj.value or "", klasses=klasses,
             location=f_loc.value or "", note=f_note.value or "",
+            co_teachers=co_teachers,
         )
         self._edit_period = None
         self._render_body()

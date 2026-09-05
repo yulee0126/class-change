@@ -140,7 +140,8 @@ class AppController:
 
     def edit_timetable_slot(self, teacher: str, weekday: int, period: int, *,
                             subject: str, klasses: list[str],
-                            location: str = "", note: str = "") -> None:
+                            location: str = "", note: str = "",
+                            co_teachers: list[str] | None = None) -> None:
         """課表校對：整格改寫成給定內容（沒有課表就先建一份空的）。"""
         from .. import timetable as _tt
         teacher = teacher.strip()
@@ -151,7 +152,8 @@ class AppController:
         t = self.timetable.teachers.setdefault(teacher, _tt.TeacherTable(name=teacher))
         t.set_slot_group(weekday, period, subject.strip(),
                          [k.strip() for k in klasses if k.strip()],
-                         location.strip(), note.strip())
+                         location.strip(), note.strip(),
+                         co_teachers=[c.strip() for c in (co_teachers or []) if c.strip()])
 
     def delete_timetable_slot(self, teacher: str, weekday: int, period: int) -> None:
         t = self.timetable_teacher_table(teacher)

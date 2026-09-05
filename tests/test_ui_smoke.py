@@ -83,12 +83,19 @@ def test_timetable_editor_edit_delete_and_save(tmp_path):
     f_klass = ft.TextField(value="高一甲、高一乙")
     f_loc = ft.TextField(value="")
     f_note = ft.TextField(value="(兼)")
-    editor._save_slot(3, f_subj, f_klass, f_loc, f_note)
+    f_co = ft.TextField(value="陳老師")
+    editor._save_slot(3, f_subj, f_klass, f_loc, f_note, f_co)
 
     grp = ctl.timetable_teacher_table("王小明").slot_group(2, 3)
     assert {s.klass for s in grp} == {"高一甲", "高一乙"}
-    assert all(s.subject == "數學" and s.note == "(兼)" for s in grp)
+    assert all(s.subject == "數學" and s.note == "(兼)" and s.co_teachers == ["陳老師"]
+              for s in grp)
     assert msgs and "更新" in msgs[-1]
+
+    # 課表校對的列會顯示協同資訊
+    row = editor._row(3, grp)
+    row_text = row.controls[1].value
+    assert "陳老師" in row_text and "協同" in row_text
 
     path = str(tmp_path / "課表.json")
     editor.save_path.value = path

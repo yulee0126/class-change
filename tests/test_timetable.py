@@ -120,6 +120,16 @@ def test_set_slot_group_single_class():
     assert t.slots == [Slot(2, 5, "數學", "高二甲", "", "")]
 
 
+def test_set_slot_group_with_co_teachers():
+    t = TeacherTable(name="趙瑋")
+    t.set_slot_group(2, 5, "基礎雜糧加工實作", ["綜職二"], co_teachers=["周蓁妍"])
+    assert t.slots[0].co_teachers == ["周蓁妍"]
+
+    # 改寫同一格、不再給 co_teachers → 清空
+    t.set_slot_group(2, 5, "基礎雜糧加工實作", ["綜職二"])
+    assert t.slots[0].co_teachers == []
+
+
 def test_delete_slot_group():
     t = TeacherTable(name="王", slots=[
         Slot(1, 3, "客語", "加工一"), Slot(1, 3, "客語", "商經一"),
@@ -140,10 +150,10 @@ def test_controller_edit_and_delete_timetable_slot():
     assert AppController().timetable_teacher_table("王") is None
 
     c.edit_timetable_slot("王", 1, 2, subject="國文", klasses=["高一甲", "高一乙"],
-                          location="", note="(兼)")
+                          location="", note="(兼)", co_teachers=["李老師"])
     grp = c.timetable_teacher_table("王").slot_group(1, 2)
     assert {s.klass for s in grp} == {"高一甲", "高一乙"}
-    assert all(s.note == "(兼)" for s in grp)
+    assert all(s.note == "(兼)" and s.co_teachers == ["李老師"] for s in grp)
 
     c.delete_timetable_slot("王", 1, 2)
     assert c.timetable_teacher_table("王").slot_group(1, 2) == []

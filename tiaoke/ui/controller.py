@@ -332,6 +332,39 @@ class AppController:
             from_swap=from_swap,
         )
 
+    def co_teachers_of(self, teacher: str, date: datetime.date, period: int) -> list[str]:
+        """查某老師在某日期某節次是否為協同課，回傳協同的其他老師名字（查不到就空list）。"""
+        if not self.timetable or not teacher or date is None:
+            return []
+        wd = date.weekday() + 1
+        if wd > 5:
+            return []
+        for s in self.timetable.slots_for(teacher.strip(), wd):
+            if s.period == period and s.co_teachers:
+                return list(s.co_teachers)
+        return []
+
+    def add_co_swap(self, *, klass, subject, teacher_a, teacher_b, date, period,
+                    target_teacher, target_subject, target_date, target_period) -> int:
+        """協作調課：協同教同一堂課的甲、乙老師，一起跟同一位目標老師對調。
+
+        產生 2 筆獨立的 SwapLeg（甲↔目標一筆、乙↔目標一筆），各自的教師單／班級單
+        各自列一列——不改資料模型去支援「多人一組」，印出來就是兩張內容相近的通知單
+        （對照真實案例：兩位協同老師原本就是這樣各自登記的）。回傳新增的腳數（固定 2）。
+        """
+        if not teacher_b.strip():
+            raise ValueError("請填協同的另一位老師。")
+        leg_a = self._build_swap(klass, teacher_a, subject, date, period,
+                                 target_teacher, target_subject, target_date, target_period)
+        leg_b = self._build_swap(klass, teacher_b, subject, date, period,
+                                 target_teacher, target_subject, target_date, target_period)
+        ev = self._require_event()
+        ev.legs.append(leg_a)
+        ev.legs.append(leg_b)
+        self._learn_names(leg_a.klass, [teacher_a, teacher_b, target_teacher],
+                          [subject, target_subject])
+        return 2
+
     def add_swap_leg(self, **kw) -> None:
         leg = self._build_swap(**kw)
         self._require_event().legs.append(leg)

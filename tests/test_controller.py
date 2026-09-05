@@ -3,7 +3,7 @@ import datetime
 import pytest
 
 from tiaoke import roc
-from tiaoke.models import Project
+from tiaoke.models import Project, Slot
 from tiaoke.ui.controller import AppController
 
 D = datetime.date
@@ -44,6 +44,57 @@ def test_add_swap_leg_and_preview():
     assert "余瑞文" in c.project.teachers
     assert "高一甲" in c.project.classes
     assert "健康與護理" in c.project.subjects
+
+
+def test_co_teachers_of_looks_up_timetable():
+    from tiaoke.timetable import Slot as TTSlot, TeacherTable, Timetable
+    c = AppController()
+    c.timetable = Timetable()
+    c.timetable.teachers["趙瑋"] = TeacherTable(name="趙瑋", slots=[
+        TTSlot(2, 5, "基礎雜糧加工實作", "綜職二", co_teachers=["周蓁妍"]),
+        TTSlot(2, 6, "基礎雜糧加工實作", "綜職二"),  # 沒協同
+    ])
+    # 2026-09-01 是星期二
+    assert c.co_teachers_of("趙瑋", D(2026, 9, 1), 5) == ["周蓁妍"]
+    assert c.co_teachers_of("趙瑋", D(2026, 9, 1), 6) == []
+    assert c.co_teachers_of("趙瑋", D(2026, 9, 2), 5) == []  # 星期三沒課
+    assert c.co_teachers_of("", D(2026, 9, 1), 5) == []
+    assert AppController().co_teachers_of("趙瑋", D(2026, 9, 1), 5) == []  # 沒課表
+
+
+def test_add_co_swap_creates_two_independent_swap_legs():
+    c = AppController()
+    c.new_event()
+    c.update_event_fields(originator="趙瑋", form_no="手動")
+    n = c.add_co_swap(
+        klass="綜職二", subject="基礎雜糧加工實作",
+        teacher_a="趙瑋", teacher_b="周蓁妍",
+        date=D(2026, 9, 3), period=5,
+        target_teacher="張宥恩", target_subject="物品整理實務",
+        target_date=D(2026, 9, 1), target_period=5,
+    )
+    assert n == 2
+    legs = c.current.legs
+    assert len(legs) == 2
+    assert {legs[0].teacher_a, legs[1].teacher_a} == {"趙瑋", "周蓁妍"}
+    assert legs[0].teacher_b == legs[1].teacher_b == "張宥恩"
+    assert legs[0].slot_a == legs[1].slot_a == Slot(D(2026, 9, 3), 5)
+    assert legs[0].slot_b == legs[1].slot_b == Slot(D(2026, 9, 1), 5)
+    # 主檔學到協同雙方的名字
+    assert "周蓁妍" in c.project.teachers and "張宥恩" in c.project.teachers
+
+
+def test_add_co_swap_requires_second_teacher():
+    c = AppController()
+    c.new_event()
+    with pytest.raises(ValueError, match="協同的另一位"):
+        c.add_co_swap(
+            klass="綜職二", subject="基礎雜糧加工實作",
+            teacher_a="趙瑋", teacher_b="",
+            date=D(2026, 9, 3), period=5,
+            target_teacher="張宥恩", target_subject="物品整理實務",
+            target_date=D(2026, 9, 1), target_period=5,
+        )
 
 
 def test_add_sub_batch():

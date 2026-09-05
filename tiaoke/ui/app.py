@@ -312,10 +312,14 @@ class AppView:
                       on_click=lambda e: self._open_leg_form("sub")),
             ft.Button("＋ 先調再代", icon=ft.Icons.SYNC_PROBLEM,
                       on_click=lambda e: self._open_leg_form("swapsub")),
+            ft.Button("＋ 協作調課", icon=ft.Icons.GROUPS,
+                      on_click=lambda e: self._open_leg_form("coswap")),
         ], wrap=True))
         self.editor.controls.append(_hint(
             "先調再代＝甲老師把某節課調到新時段後，那節新時段再請人代（因為甲要請假）。"
-            "一次會產生「1 筆調課 + 1 筆代課」。"))
+            "一次會產生「1 筆調課 + 1 筆代課」。\n"
+            "協作調課＝兩位老師協同教同一堂課，一起跟另一位老師對調（有匯入教師配當表的話，"
+            "選了甲老師的課會自動抓出協同的另一位）。一次會產生 2 筆調課。"))
         summaries = self.ctl.leg_summaries()
         if not summaries:
             self.editor.controls.append(_hint("（還沒加，先按上面按鈕）"))
@@ -463,10 +467,15 @@ class AppView:
             if initial is None:
                 return
             kind = initial["kind"]
-        self._leg_form = _LegForm(
-            self.page, kind, self._submit_leg, self._cancel_leg,
-            originator=self.ctl.current.originator, ctl=self.ctl,
-            initial=initial, edit_index=edit_index)
+        if kind == "coswap":
+            self._leg_form = _CoSwapForm(
+                self.page, self._submit_co_swap, self._cancel_leg,
+                originator=self.ctl.current.originator, ctl=self.ctl)
+        else:
+            self._leg_form = _LegForm(
+                self.page, kind, self._submit_leg, self._cancel_leg,
+                originator=self.ctl.current.originator, ctl=self.ctl,
+                initial=initial, edit_index=edit_index)
         self.refresh()
 
     def _cancel_leg(self) -> None:
@@ -490,6 +499,16 @@ class AppView:
         msg = "已更新一筆。" if edit_index is not None else (
             "已加入 1 筆調課 + 1 筆代課。" if kind == "swapsub" else "已加入一筆。")
         self._set_status(msg)
+        self.refresh()
+
+    def _submit_co_swap(self, data: dict) -> None:
+        try:
+            self.ctl.add_co_swap(**data)
+        except (ValueError, KeyError) as exc:
+            self._set_status(f"存不進去：{exc}")
+            return
+        self._leg_form = None
+        self._set_status("已加入協作調課（2 筆調課，兩位協同老師各一筆）。")
         self.refresh()
 
     def _on_generate(self, _e) -> None:
@@ -956,6 +975,165 @@ class _LegForm(ft.Container):
             self.err.update()
             return
         self._on_submit(self.kind, data, self.edit_index)
+
+    @staticmethod
+    def _req(df: "_DateField") -> datetime.date:
+        d = df.get()
+        if d is None:
+            raise ValueError("日期沒填")
+        return d
+
+    @staticmethod
+    def _period(dd: ft.Dropdown, label: str) -> int:
+        s = str(dd.value or "").strip()
+        if not s.isdigit():
+            raise ValueError(f"請選{label}")
+        return int(s)
+
+
+class _CoSwapForm(ft.Container):
+    """協作調課：協同教同一堂課的甲、乙老師一起跟目標老師對調（一次產生 2 筆調課）。
+
+    甲老師＋日期＋節次填了、又剛好是課表比對出來的協同節次時，會自動帶出乙老師建議
+    （P7／教師配當表匯入後才有這個資訊；沒有課表或沒協同資料就得自己打乙老師）。
+    """
+
+    def __init__(self, page, on_submit, on_cancel, *,
+                originator: str = "", ctl=None) -> None:
+        super().__init__(bgcolor=ft.Colors.BLUE_GREY_50, padding=12, border_radius=8)
+        self.edit_index = None  # 不支援編輯，只用來跟 _LegForm 的介面一致
+        self.ctl = ctl
+        self._on_submit = on_submit
+        self._on_cancel = on_cancel
+        today = datetime.date.today()
+        names = self._teacher_names()
+
+        def nf(label, value=""):
+            return _NameField(label, value, names, 110, on_change=self._sync)
+
+        self.klass = ft.TextField(label="班級", width=110, dense=True)
+        self.subject = ft.TextField(label="協同課程", width=150, dense=True)
+        self.ta = nf("甲老師（協同）", originator)
+        self.tb = nf("乙老師（協同）")
+        self.date = _DateField(page, "原本日期", today, width=130, on_change=self._sync)
+        self.period = _period_dd(None)
+        self.pick_a = ft.Column(spacing=2, tight=True)
+        self.co_hint = ft.Text("", size=11, color=ft.Colors.GREEN_700)
+
+        self.target_teacher = nf("目標老師")
+        self.target_subject = ft.TextField(label="目標科目", width=130, dense=True)
+        self.target_date = _DateField(page, "目標日期", today, width=130, on_change=self._sync)
+        self.target_period = _period_dd(None)
+        self.pick_target = ft.Column(spacing=2, tight=True)
+
+        self.err = ft.Text("", color=ft.Colors.RED_700)
+
+        self.content = ft.Column([
+            ft.Text("協作調課", weight=ft.FontWeight.BOLD),
+            _hint("兩位老師協同教同一堂課，一起跟另一位老師對調。會產生 2 筆調課"
+                  "（甲跟目標老師一筆、乙跟目標老師一筆），印出來各自一張通知單。"),
+            ft.Row([self.klass, self.subject], wrap=True),
+            ft.Text("協同的兩位老師（原時段共用同一節課）", size=12, color=_HINT),
+            ft.Row([self.ta.control, self.tb.control, self.date.control, self.period],
+                  wrap=True, vertical_alignment=ft.CrossAxisAlignment.START),
+            self.pick_a,
+            self.co_hint,
+            ft.Text("要對調的目標老師（新時段）", size=12, color=_HINT),
+            ft.Row([self.target_teacher.control, self.target_subject,
+                    self.target_date.control, self.target_period],
+                  wrap=True, vertical_alignment=ft.CrossAxisAlignment.START),
+            self.pick_target,
+            self.err,
+            ft.Row([
+                ft.Button("加入", icon=ft.Icons.CHECK, on_click=self._submit),
+                ft.TextButton("取消", on_click=lambda e: self._on_cancel()),
+            ]),
+        ], spacing=8, tight=True)
+        self._fill_picks()
+
+    def _teacher_names(self) -> list[str]:
+        if self.ctl is None:
+            return []
+        names = set(self.ctl.timetable_teacher_names())
+        names.update(self.ctl.project.teachers)
+        return sorted(names)
+
+    def _sync(self, *_a) -> None:
+        self._fill_picks()
+        _safe_update(self)
+
+    def _fill_picks(self) -> None:
+        self.pick_a.controls = self._pick_ctrls(self.ta.value, self.date, "a")
+        self.pick_target.controls = self._pick_ctrls(self.target_teacher.value,
+                                                      self.target_date, "t")
+        self._detect_co_teacher()
+
+    def _pick_ctrls(self, teacher: str, datefield: "_DateField", side: str) -> list:
+        if self.ctl is None or not (teacher or "").strip():
+            return []
+        try:
+            d = datefield.get()
+        except ValueError:
+            d = None
+        if d is None:
+            return []
+        slots = self.ctl.timetable_slots(teacher, d)
+        if not slots:
+            return []
+        wd = "一二三四五"[d.weekday()]
+        row = ft.Row(wrap=True, spacing=4, run_spacing=2)
+        for s in slots:
+            label = f"第{s.period}節 {s.subject}" + (f"／{s.klass}" if s.klass else "")
+            if side == "a" and s.co_teachers:
+                label += "　🤝協同"
+            row.controls.append(ft.OutlinedButton(
+                label, on_click=lambda e, s=s, side=side: self._apply_slot(side, s)))
+        return [ft.Text(f"{teacher} 星期{wd} 的課（點一下帶入）：", size=11, color=_HINT), row]
+
+    def _apply_slot(self, side: str, s) -> None:
+        if side == "a":
+            self.subject.value, self.period.value = s.subject, str(s.period)
+            if s.klass:
+                self.klass.value = s.klass
+        else:
+            self.target_subject.value, self.target_period.value = s.subject, str(s.period)
+        self._sync()
+
+    def _detect_co_teacher(self) -> None:
+        self.co_hint.value = ""
+        if self.ctl is None:
+            return
+        teacher = self.ta.value.strip()
+        try:
+            d = self.date.get()
+        except ValueError:
+            d = None
+        period_txt = str(self.period.value or "").strip()
+        if not (teacher and d and period_txt.isdigit()):
+            return
+        others = self.ctl.co_teachers_of(teacher, d, int(period_txt))
+        if not others:
+            return
+        if not self.tb.value.strip():
+            self.tb.field.value = others[0]
+        self.co_hint.value = f"✓ 課表比對出這節是協同課，協同老師：{'、'.join(others)}"
+
+    def _submit(self, _e) -> None:
+        try:
+            data = dict(
+                klass=self.klass.value or "", subject=self.subject.value or "",
+                teacher_a=self.ta.value or "", teacher_b=self.tb.value or "",
+                date=self._req(self.date), period=self._period(self.period, "原節次"),
+                target_teacher=self.target_teacher.value or "",
+                target_subject=self.target_subject.value or "",
+                target_date=self._req(self.target_date),
+                target_period=self._period(self.target_period, "目標節次"),
+            )
+        except ValueError as exc:
+            self.err.value = str(exc)
+            _safe_update(self.err)
+            return
+        self._on_submit(data)
 
     @staticmethod
     def _req(df: "_DateField") -> datetime.date:

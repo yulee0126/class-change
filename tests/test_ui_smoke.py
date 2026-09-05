@@ -217,3 +217,43 @@ def test_timetable_import_reads_co_teaching_and_marks_slots(tmp_path):
     assert ctl.timetable.teachers["趙瑋"].slots[0].co_teachers == ["周蓁妍"]
     assert msgs and "協同" in msgs[-1]
     assert "標記 2 個節次" in importer.status.value
+
+
+def test_co_swap_form_end_to_end():
+    import datetime as _dt
+    from tiaoke.timetable import Slot as TTSlot, TeacherTable, Timetable
+
+    page = _FakePage()
+    view = AppView(page)
+    view.ctl.timetable = Timetable()
+    view.ctl.timetable.teachers["趙瑋"] = TeacherTable(name="趙瑋", slots=[
+        TTSlot(4, 5, "基礎雜糧加工實作", "綜職二", co_teachers=["周蓁妍"]),
+    ])
+    view.ctl.new_event()
+    view.ctl.update_event_fields(originator="趙瑋", form_no="手動")
+
+    view._open_leg_form("coswap")
+    form = view._leg_form
+    assert form.edit_index is None
+
+    # 2026-09-03 是星期四
+    form.ta.field.value = "趙瑋"
+    form.date.field.value = "2026-09-03"
+    form.period.value = "5"
+    form._sync()
+    assert form.tb.value == "周蓁妍"          # 自動帶出協同老師
+    assert "協同" in form.co_hint.value
+
+    form.klass.value = "綜職二"
+    form.subject.value = "基礎雜糧加工實作"
+    form.target_teacher.field.value = "張宥恩"
+    form.target_subject.value = "物品整理實務"
+    form.target_date.field.value = "2026-09-01"
+    form.target_period.value = "5"
+    form._submit(None)
+
+    assert view._leg_form is None
+    legs = view.ctl.current.legs
+    assert len(legs) == 2
+    assert {legs[0].teacher_a, legs[1].teacher_a} == {"趙瑋", "周蓁妍"}
+    assert "協作調課" in view.status.value

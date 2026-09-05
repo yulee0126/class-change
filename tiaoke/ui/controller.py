@@ -44,6 +44,27 @@ class SlipPreview:
 
 
 @dataclass
+class ReportResult:
+    path: str = ""
+    files_ok: int = 0
+    files_failed: list[str] = field(default_factory=list)
+    rows: int = 0
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+    def __str__(self) -> str:
+        if self.error:
+            return f"產製報表失敗：{self.error}"
+        s = f"{self.files_ok} 個檔案、{self.rows} 筆明細"
+        if self.files_failed:
+            s += f"（另有 {len(self.files_failed)} 筆解析失敗，已略過）"
+        return s
+
+
+@dataclass
 class PreviewResult:
     slips: list[SlipPreview] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
@@ -65,7 +86,6 @@ class AppController:
         self.timetable = None          # tiaoke.timetable.Timetable | None
         self._pending_tt = None
         self.record_folder: str = ""
-        self.last_record: record.RecordReport | None = None
         if self.project.events:
             self.current_index = 0
 
@@ -194,15 +214,6 @@ class AppController:
     def export_all_xlsx(self, path: str) -> output.TargetResult:
         """把所有事件匯出成一個 Excel（一事件一分頁）。"""
         return output.export_all(self.project.events, path, self.timetable)
-
-    def rebuild_record_stats(self) -> list[record.RecordReport]:
-        """重算記錄檔資料夾裡每個「{學期}調代課記錄.xlsx」的月統計。"""
-        import glob
-        out = []
-        if self.record_folder:
-            for p in sorted(glob.glob(os.path.join(self.record_folder, "*調代課記錄.xlsx"))):
-                out.append(record.rebuild_stats_file(p))
-        return out
 
     def load_project(self, path: str) -> None:
         self.project = storage.load_project(path)
@@ -437,21 +448,85 @@ class AppController:
     def generate(self, *, to_master: bool, save_new: bool,
                  master_path: str = "", dest_path: str = "") -> list[output.TargetResult]:
         ev = self._require_event()
-        problems = [p for p in validate(ev) if "未填" in p or "超出範圍" in p or "無法對調" in p]
-        if problems:
-            raise ValueError("請先修正：\n- " + "\n- ".join(problems))
+        self._validate_or_raise(ev)
         if to_master and master_path:
             self.project.master_path = master_path
-        results = output.run(
+        return output.run(
             ev,
             to_master=to_master, master_path=master_path,
             save_new=save_new, dest_path=dest_path,
             timetable=self.timetable,
         )
-        self.last_record = None
-        if self.record_folder and any(r.ok for r in results):
-            self.last_record = record.update_record(self.record_folder, ev, self.timetable)
-        return results
+
+    # ---- 搜尋既有檔案／編輯／存回 --------------------------------
+    def list_slip_files(self, folder: str) -> list[str]:
+        """列出資料夾內可搜尋的通知單檔名（略過暫存/鎖定檔），新到舊排序。"""
+        if not folder or not os.path.isdir(folder):
+            return []
+        names = [f for f in os.listdir(folder)
+                if f.lower().endswith(".xlsx") and not f.startswith("~$")]
+        names.sort(key=lambda f: os.path.getmtime(os.path.join(folder, f)), reverse=True)
+        return names
+
+    def load_event_from_file(self, path: str) -> Event:
+        """讀回既有通知單 Excel 供編輯；解析不了會拋 xlsx_reader.ParseError。"""
+        from .. import xlsx_reader
+        ev = xlsx_reader.read_event(path)
+        ev._source_path = path  # 動態屬性，不參與序列化，記錄「存回」時要比對的原檔
+        self.project.events.append(ev)
+        self.current_index = len(self.project.events) - 1
+        return ev
+
+    def resave_loaded_file(self, dest_path: str) -> output.TargetResult:
+        """把讀回編輯中的通知單存回：檔名跟原檔不同就先刪原檔（呼叫端已跟使用者確認過）。"""
+        ev = self._require_event()
+        self._validate_or_raise(ev)
+        src = getattr(ev, "_source_path", None)
+        if src and os.path.exists(src) and os.path.abspath(src) != os.path.abspath(dest_path):
+            os.remove(src)
+        result = output.save_as_new(ev, dest_path, self.timetable)
+        if result.ok:
+            ev._source_path = dest_path
+        return result
+
+    def generate_report(self, slips_folder: str, out_folder: str) -> "ReportResult":
+        """掃資料夾內所有通知單 Excel，重新產生一份帶時間戳記的記錄檔。"""
+        from .. import xlsx_reader
+        if not slips_folder or not os.path.isdir(slips_folder):
+            return ReportResult(error=f"找不到資料夾：{slips_folder}")
+
+        rows: list[list] = []
+        failed: list[str] = []
+        files_ok = 0
+        for fn in sorted(os.listdir(slips_folder)):
+            if not fn.lower().endswith(".xlsx") or fn.startswith("~$") or fn.startswith("~~"):
+                continue
+            path = os.path.join(slips_folder, fn)
+            try:
+                sheets = xlsx_reader.read_events(path)
+            except Exception as exc:  # noqa: BLE001 - 壞檔不能讓整個報表中斷
+                failed.append(f"{fn}：{exc}")
+                continue
+            any_ok = False
+            for sheet_name, ev, err in sheets:
+                if ev is None:
+                    failed.append(f"{fn}［{sheet_name}］：{err}")
+                    continue
+                rows.extend(record.event_to_rows(ev, self.timetable))
+                any_ok = True
+            if any_ok:
+                files_ok += 1
+
+        if not rows:
+            return ReportResult(files_ok=files_ok, files_failed=failed,
+                                error="沒有任何可用資料，沒有產生報表。")
+
+        ts = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
+        name = f"{record.semester_code(datetime.date.today())}調代課記錄-{ts}.xlsx"
+        os.makedirs(out_folder, exist_ok=True)
+        out_path = os.path.join(out_folder, name)
+        record.build_report(rows).save(out_path)
+        return ReportResult(path=out_path, files_ok=files_ok, files_failed=failed, rows=len(rows))
 
     # ---- 內部 -------------------------------------------------
     def _require_event(self) -> Event:
@@ -459,6 +534,12 @@ class AppController:
             self.new_event()
         assert self.current is not None
         return self.current
+
+    @staticmethod
+    def _validate_or_raise(ev: Event) -> None:
+        problems = [p for p in validate(ev) if "未填" in p or "超出範圍" in p or "無法對調" in p]
+        if problems:
+            raise ValueError("請先修正：\n- " + "\n- ".join(problems))
 
     def _learn_names(self, klass: str, teachers: list[str], subjects: list[str]) -> None:
         p = self.project

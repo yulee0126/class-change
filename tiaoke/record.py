@@ -291,6 +291,16 @@ def _force_recalc(wb: Workbook) -> None:
         pass
 
 
+def build_report(rows: list[list]) -> Workbook:
+    """把已收集好的明細列組成一份全新的記錄檔活頁簿（供「產製報表」用，不覆蓋既有檔案）。"""
+    wb = Workbook()
+    wb.remove(wb.active)
+    _write_detail(wb, rows)
+    _rebuild_stats(wb)
+    _force_recalc(wb)
+    return wb
+
+
 def rebuild_stats_file(path: str) -> RecordReport:
     """只重算某個記錄檔的「月統計」（使用者手改明細後用）。"""
     try:

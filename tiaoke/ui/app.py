@@ -149,20 +149,17 @@ class AppView:
 
         self.status = ft.Text("", color=ft.Colors.BLUE_GREY_800, selectable=True)
 
-        # 預設一個「資料庫」JSON；存在就開機自動載入。路徑失效（換電腦）就回退到可攜預設。
-        if not self.settings.last_project or not (
-                os.path.exists(self.settings.last_project)
-                or os.path.isdir(os.path.dirname(self.settings.last_project) or ".")):
-            self.settings.last_project = paths.default_db_path()
-        if os.path.exists(self.settings.last_project):
-            try:
-                self.ctl.load_project(self.settings.last_project)
-            except Exception:
-                pass
-        self.project_path = ft.TextField(hint_text="資料庫 .json", dense=True,
-                                         value=self.settings.last_project, expand=True)
+        # 調代課單輸出資料夾：設定裡有且存在就用它，否則用 exe/專案 旁邊的「調代課單」（可攜）
+        sf = self.settings.slips_folder
+        if not sf or not os.path.isdir(sf):
+            sf = paths.slips_dir()
+        self.settings.slips_folder = sf
+
+        self.slips_folder = ft.TextField(
+            label="調代課單資料夾", dense=True, value=sf,
+            on_change=self._on_slips_folder_change)
         self.record_folder = ft.TextField(
-            label="記錄檔資料夾", dense=True, value=self.settings.record_folder,
+            label="報表存放資料夾", dense=True, value=self.settings.record_folder,
             on_change=self._on_record_folder_change)
         self.event_list = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO)
         self.editor = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
@@ -187,25 +184,17 @@ class AppView:
                 self.event_list,
                 ft.Divider(),
                 ft.ExpansionTile(
-                    title=ft.Text("進階：專案存檔．課表匯入／校對"),
+                    title=ft.Text("進階：搜尋檔案．產製報表．課表匯入／校對"),
                     tile_padding=ft.Padding(0, 0, 0, 0),
                     controls=[
-                        _hint("儲存＝同時存一個 .json（可再編輯）和一個 .xlsx（所有單合在一個 Excel）。"),
-                        self.project_path,
-                        ft.Row([
-                            ft.IconButton(ft.Icons.FOLDER_OPEN, tooltip="開啟 .json", on_click=self._on_open_project),
-                            ft.IconButton(ft.Icons.SAVE, tooltip="儲存（.json + .xlsx）", on_click=self._on_save_project),
-                            ft.IconButton(ft.Icons.NOTE_ADD, tooltip="全部清空重來", on_click=self._on_new_project),
-                        ]),
-                        ft.Button("只匯出全部成一個 Excel", icon=ft.Icons.TABLE_VIEW,
-                                  on_click=self._on_export_all),
+                        self.slips_folder,
+                        _SlipSearch(self.ctl, self.slips_folder, self._on_file_loaded),
                         ft.Divider(),
-                        _hint("每次產生 Excel 時，會把代課／調課明細同步寫進這個資料夾裡的\n"
-                              "「{學期}調代課記錄.xlsx」。月統計的堂數是公式，手改明細會自動更新；\n"
-                              "若手動新增了全新的老師，按下面按鈕重算一次。"),
+                        _hint("掃「調代課單資料夾」內所有檔案，重新算一份記錄檔（帶時間戳記，\n"
+                              "不覆蓋舊檔）。檔名前綴 ~~ 的視為作廢，會略過。"),
                         self.record_folder,
-                        ft.Button("重算記錄檔月統計", icon=ft.Icons.CALCULATE,
-                                  on_click=self._on_rebuild_stats),
+                        ft.Button("產製報表", icon=ft.Icons.SUMMARIZE,
+                                  on_click=self._on_generate_report),
                         ft.Divider(),
                         _TimetableImport(self.ctl, self.settings, self._on_tt_changed),
                         ft.Divider(),
@@ -372,12 +361,18 @@ class AppView:
         # ---------- 4. 產生 ----------
         self.editor.controls.append(ft.Divider())
         self.editor.controls.append(_section("④ 產生 Excel"))
-        self.tf_new = ft.TextField(label="存到", value=self.ctl.default_new_path(),
+        src_path = getattr(ev, "_source_path", None)
+        self.tf_new = ft.TextField(label="存到", value=src_path or self.ctl.default_new_path(),
                                    expand=True, dense=True)
         self.editor.controls.append(self.tf_new)
-        self.editor.controls.append(_hint(
-            "產生這張單的 Excel，同時把代課／調課明細寫進記錄檔。\n"
-            "要把所有單合成一個檔，用左側進階的「儲存」或「只匯出全部成一個 Excel」。"))
+        if src_path:
+            self.editor.controls.append(_hint(
+                f"這張是從既有檔案讀回來的：{src_path}\n"
+                "按下面按鈕存檔前會先跟你確認（存回原檔＝覆蓋；改檔名＝刪掉原檔存新檔名）。"))
+        else:
+            self.editor.controls.append(_hint(
+                "產生這張單的 Excel。要統計代課／調課明細，用左側進階的「產製報表」\n"
+                "（掃 調代課單 資料夾內所有檔案現算，不是每張單各自累加）。"))
         self.editor.controls.append(ft.Button(
             "產生 Excel", icon=ft.Icons.TABLE_VIEW, height=44,
             on_click=self._on_generate,
@@ -502,6 +497,37 @@ class AppView:
         if not dest:
             self._set_status("請先填「存到」的路徑。")
             return
+        src = getattr(self.ctl.current, "_source_path", None)
+        if src:
+            self._confirm_resave(src, dest)
+        else:
+            self._do_generate(dest)
+
+    def _confirm_resave(self, src: str, dest: str) -> None:
+        if os.path.abspath(src) == os.path.abspath(dest):
+            self._show_confirm("確定覆蓋原檔？", [f"會覆蓋：{dest}"],
+                               lambda: self._do_resave(dest))
+        else:
+            self._show_confirm("確定另存新檔名？",
+                               [f"會刪除原檔：{src}", f"另存為：{dest}"],
+                               lambda: self._do_resave(dest))
+
+    def _do_resave(self, dest: str) -> None:
+        try:
+            result = self.ctl.resave_loaded_file(dest)
+        except ValueError as exc:
+            self._show_dialog("還不能存檔", [str(exc)])
+            self._set_status(str(exc))
+            return
+        if result.ok:
+            self._show_dialog("已存回", [f"✓ {result.path}"])
+            self._set_status(f"✓ 已存回：{result.path}")
+        else:
+            self._show_dialog("存檔失敗", [f"✗ {result.error}"])
+            self._set_status(f"✗ {result.error}")
+        self.refresh()
+
+    def _do_generate(self, dest: str) -> None:
         try:
             results = self.ctl.generate(
                 to_master=False, save_new=True, dest_path=dest,
@@ -516,13 +542,6 @@ class AppView:
                 ok_lines.append(f"✓ 通知單 Excel\n{r.path}")
             else:
                 err_lines.append(f"✗ {r.error}")
-
-        rec = self.ctl.last_record
-        if rec is not None:
-            if rec.ok:
-                ok_lines.append(f"✓ 記錄檔（{rec}）\n{rec.path}")
-            else:
-                err_lines.append(f"✗ {rec}")
 
         title = "已產生 Excel" if ok_lines and not err_lines else (
             "部分未成功" if ok_lines else "產生失敗")
@@ -546,6 +565,29 @@ class AppView:
             self._dlg.open = True
             self.page.update()
 
+    def _show_confirm(self, title: str, lines: list[str], on_confirm) -> None:
+        def _yes(_e):
+            self._close_dialog()
+            on_confirm()
+
+        self._dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(title, weight=ft.FontWeight.BOLD),
+            content=ft.Column([ft.Text(l, selectable=True) for l in lines],
+                              tight=True, width=560, spacing=6),
+            actions=[
+                ft.TextButton("取消", on_click=lambda e: self._close_dialog()),
+                ft.Button("確定", on_click=_yes,
+                         style=ft.ButtonStyle(bgcolor=ft.Colors.RED_600, color=ft.Colors.WHITE)),
+            ],
+        )
+        try:
+            self.page.show_dialog(self._dlg)
+        except Exception:
+            self.page.overlay.append(self._dlg)
+            self._dlg.open = True
+            self.page.update()
+
     def _close_dialog(self) -> None:
         try:
             self.page.pop_dialog()
@@ -553,46 +595,6 @@ class AppView:
             if getattr(self, "_dlg", None):
                 self._dlg.open = False
         self.page.update()
-
-    def _on_new_project(self, _e) -> None:
-        self.ctl.new_project()
-        self.project_path.value = ""
-        self._leg_form = None
-        self._set_status("已清空。")
-        self.refresh()
-
-    def _on_open_project(self, _e) -> None:
-        path = (self.project_path.value or "").strip()
-        try:
-            self.ctl.load_project(path)
-        except (OSError, ValueError) as exc:
-            self._set_status(f"開啟失敗：{exc}")
-            return
-        self.settings.note_recent(path)
-        self.settings.save()
-        self._leg_form = None
-        self._set_status(f"已開啟 {path}")
-        self.refresh()
-
-    def _on_save_project(self, _e) -> None:
-        path = (self.project_path.value or "").strip()
-        if not path:
-            self._set_status("先在上面欄位打一個路徑（副檔名可省略）。")
-            return
-        try:
-            rep = self.ctl.save_project(path)
-        except OSError as exc:
-            self._set_status(f"儲存失敗：{exc}")
-            return
-        xlsx = rep.path[:-5] + ".xlsx"
-        r = self.ctl.export_all_xlsx(xlsx)
-        self.project_path.value = rep.path
-        self.settings.note_recent(rep.path)
-        self.settings.save()
-        msg = f"已儲存資料庫（{rep}）：\n{rep.path}"
-        msg += f"\n{r.path}" if r.ok else f"\n（Excel 匯出失敗：{r.error}）"
-        self._set_status(msg)
-        self.refresh()
 
     def _all_teacher_names(self) -> list[str]:
         names = set(self.ctl.timetable_teacher_names())
@@ -609,23 +611,28 @@ class AppView:
         self.settings.record_folder = folder
         self.settings.save()
 
-    def _on_rebuild_stats(self, _e) -> None:
-        reports = self.ctl.rebuild_record_stats()
-        if not reports:
-            self._set_status("記錄檔資料夾裡沒有找到「…調代課記錄.xlsx」。")
-            return
-        lines = [f"✓ {r.path}" if r.ok else f"✗ {r.error}" for r in reports]
-        self._show_dialog("已重算月統計", lines)
-        self._set_status("　｜　".join(lines))
+    def _on_slips_folder_change(self, e) -> None:
+        self.settings.slips_folder = (e.control.value or "").strip()
+        self.settings.save()
 
-    def _on_export_all(self, _e) -> None:
-        path = (self.project_path.value or "").strip()
-        if not path:
-            path = self.ctl.default_new_path()
-        xlsx = (path[:-5] if path.lower().endswith(".json") else path)
-        r = self.ctl.export_all_xlsx(xlsx if xlsx.lower().endswith(".xlsx") else xlsx + ".xlsx")
-        self._set_status(f"✓ 已匯出 {r.path}" if r.ok else f"✗ {r.error}")
+    def _on_file_loaded(self, msg: str) -> None:
+        self._leg_form = None
+        self._set_status(msg)
         self.refresh()
+
+    def _on_generate_report(self, _e) -> None:
+        rep = self.ctl.generate_report(self.slips_folder.value or "",
+                                       self.record_folder.value or "")
+        if not rep.ok:
+            self._show_dialog("產製報表失敗", [rep.error])
+            self._set_status(f"✗ {rep.error}")
+            return
+        lines = [f"✓ {rep.files_ok} 個檔案、{rep.rows} 筆明細", f"存到：{rep.path}"]
+        if rep.files_failed:
+            lines.append(f"以下 {len(rep.files_failed)} 筆解析失敗，未計入：")
+            lines.extend(f"　{f}" for f in rep.files_failed)
+        self._show_dialog("已產製報表", lines)
+        self._set_status(str(rep))
 
     def _on_window_close(self, _e) -> None:
         try:
@@ -963,6 +970,52 @@ class _LegForm(ft.Container):
         if not s.isdigit():
             raise ValueError(f"請選{label}")
         return int(s)
+
+
+class _SlipSearch(ft.Column):
+    """搜尋「調代課單資料夾」內的既有檔案，邊打邊列出符合的檔名，點一下讀回來編輯。"""
+
+    def __init__(self, ctl, folder_field: ft.TextField, on_loaded) -> None:
+        super().__init__(spacing=4, tight=True)
+        self.ctl = ctl
+        self.folder_field = folder_field
+        self.on_loaded = on_loaded
+        self.query = ft.TextField(hint_text="打檔名關鍵字…", dense=True, expand=True,
+                                  on_change=self._typed)
+        self.results = ft.Column(spacing=1, tight=True)
+        self.status = ft.Text("", size=11, color=_HINT)
+        self.controls = [
+            ft.Text("搜尋檔案", weight=ft.FontWeight.BOLD),
+            _hint("邊打邊列出「調代課單資料夾」內符合的檔名，點一下讀回來編輯。\n"
+                  "讀回後在右側修改，按「產生 Excel」存檔時會先問要覆蓋還是另存新檔名。"),
+            self.query,
+            self.results,
+            self.status,
+        ]
+
+    def _typed(self, _e=None) -> None:
+        folder = (self.folder_field.value or "").strip()
+        q = (self.query.value or "").strip()
+        names = self.ctl.list_slip_files(folder)
+        if q:
+            names = [n for n in names if q in n]
+        self.results.controls = [
+            ft.TextButton(n, on_click=lambda e, n=n: self._pick(folder, n))
+            for n in names[:15]
+        ]
+        _safe_update(self.results)
+
+    def _pick(self, folder: str, name: str) -> None:
+        path = os.path.join(folder, name)
+        try:
+            ev = self.ctl.load_event_from_file(path)
+        except Exception as exc:  # noqa: BLE001 - 讀不回來要能顯示原因，什麼錯誤都接
+            self.status.value = f"讀取失敗：{exc}"
+            _safe_update(self.status)
+            return
+        self.status.value = f"已讀回：{name}（{len(ev.legs)} 筆異動），可在右側編輯。"
+        _safe_update(self.status)
+        self.on_loaded(f"已讀回 {name}")
 
 
 class _TimetableImport(ft.Column):

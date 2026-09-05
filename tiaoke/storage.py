@@ -90,6 +90,7 @@ class AppSettings:
     default_class_slip_style: str = "banner"
     timetable_path: str = ""
     record_folder: str = ""
+    slips_folder: str = ""  # 「調代課單」輸出資料夾：搜尋既有檔案／產製報表都用這個
     window_width: int = 1180
     window_height: int = 820
     recent_projects: list[str] = field(default_factory=list)

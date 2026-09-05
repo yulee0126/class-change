@@ -1,4 +1,5 @@
 import datetime
+import os
 
 import openpyxl
 
@@ -114,6 +115,16 @@ def test_stats_headers_include_extra_hours_columns():
     ]
 
 
+def test_build_report_produces_detail_and_stats():
+    ev1 = samples.get("炆明1150831")
+    ev2 = samples.get("代課範例")
+    rows = record.event_to_rows(ev1, ts="x") + record.event_to_rows(ev2, ts="x")
+    wb = record.build_report(rows)
+    assert wb.sheetnames == [record.DETAIL_SHEET, record.STATS_SHEET]
+    detail = [r for r in wb[record.DETAIL_SHEET].iter_rows(min_row=2, values_only=True) if r[0]]
+    assert len(detail) == len(rows)
+
+
 def test_stat_keys_dates_are_actual_class_dates():
     """月統計的『代課日期明細』依實際上課日歸月（不是公告日）。"""
     from openpyxl import Workbook
@@ -141,13 +152,15 @@ def test_regenerate_replaces_not_duplicates(tmp_path):
     assert len(detail) == 1
 
 
-def test_controller_writes_record_on_generate(tmp_path):
+def test_controller_generate_no_longer_writes_record_automatically(tmp_path):
+    """P6 決定：記錄檔改由「產製報表」現算，產生 Excel 不再逐次累加寫入 record。"""
     c = AppController()
     c.record_folder = str(tmp_path / "rec")
     c.new_event()
     c.update_event_fields(originator="余瑞文", form_no="手動", announce_date=D(2026, 8, 25))
     c.add_sub_leg(klass="電機一", orig_teacher="余瑞文", subject="健康與護理",
                   date=D(2026, 9, 1), period=2, sub_teacher="王小明")
-    c.generate(to_master=False, save_new=True, dest_path=str(tmp_path / "x.xlsx"))
-    assert c.last_record is not None and c.last_record.ok
-    assert c.last_record.added_sub == 1
+    results = c.generate(to_master=False, save_new=True, dest_path=str(tmp_path / "x.xlsx"))
+    assert all(r.ok for r in results)
+    assert not hasattr(c, "last_record")
+    assert not os.path.isdir(c.record_folder)  # 沒有另外建立記錄檔資料夾/檔案

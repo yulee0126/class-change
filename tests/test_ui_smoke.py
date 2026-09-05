@@ -8,8 +8,19 @@ import pytest
 
 ft = pytest.importorskip("flet")
 
-from tiaoke.ui.app import AppView, _TimetableEditor, main  # noqa: E402
+from tiaoke import samples
+from tiaoke.ui.app import AppView, _SlipSearch, _TimetableEditor, main  # noqa: E402
 from tiaoke.ui.controller import AppController  # noqa: E402
+from tiaoke.xlsx_writer import write_sheet  # noqa: E402
+
+
+def _write(event, path):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = event.sheet_name
+    write_sheet(ws, event)
+    wb.save(path)
 
 
 class _FakePage:
@@ -17,6 +28,7 @@ class _FakePage:
         self.controls = []
         self.title = ""
         self.window = types.SimpleNamespace(width=0, height=0)
+        self.overlay = []
         self.updated = 0
 
     def add(self, *controls):
@@ -86,3 +98,91 @@ def test_timetable_editor_edit_delete_and_save(tmp_path):
     editor._delete_slot(3)
     assert ctl.timetable_teacher_table("王小明").slot_group(2, 3) == []
     assert "刪除" in msgs[-1]
+
+
+def test_slip_search_finds_and_loads_file(tmp_path):
+    ev = samples.get("代課範例")
+    path = tmp_path / f"1001-{ev.sheet_name}.xlsx"
+    _write(ev, str(path))
+
+    ctl = AppController()
+    folder_field = ft.TextField(value=str(tmp_path))
+    msgs = []
+    search = _SlipSearch(ctl, folder_field, on_loaded=msgs.append)
+
+    search.query.value = ev.sheet_name
+    search._typed()
+    assert any(b.content == path.name for b in search.results.controls)
+
+    search._pick(str(tmp_path), path.name)
+    assert ctl.current is not None
+    assert ctl.current.originator == ev.originator
+    assert getattr(ctl.current, "_source_path") == str(path)
+    assert msgs and "讀回" in msgs[-1]
+
+
+def test_slip_search_shows_error_on_unparseable_file(tmp_path):
+    (tmp_path / "bad.xlsx").write_bytes(b"not a real xlsx")
+    ctl = AppController()
+    folder_field = ft.TextField(value=str(tmp_path))
+    search = _SlipSearch(ctl, folder_field, on_loaded=lambda m: None)
+    search._pick(str(tmp_path), "bad.xlsx")
+    assert "失敗" in search.status.value
+    assert ctl.current is None
+
+
+def test_generate_confirms_before_overwriting_loaded_file(tmp_path):
+    ev = samples.get("代課範例")
+    path = tmp_path / "x.xlsx"
+    _write(ev, str(path))
+
+    page = _FakePage()
+    view = AppView(page)
+    view.ctl.load_event_from_file(str(path))
+    view.refresh()
+    assert view.tf_new.value == str(path)  # 預設存回原路徑
+
+    view._on_generate(None)
+    assert view._dlg is not None
+    assert "覆蓋" in view._dlg.title.value
+    confirm_action = view._dlg.actions[1]
+    confirm_action.on_click(None)
+
+    assert os.path.exists(path)
+    assert "已存回" in view.status.value
+
+
+def test_generate_confirms_delete_old_when_renaming_loaded_file(tmp_path):
+    ev = samples.get("代課範例")
+    old_path = tmp_path / "old.xlsx"
+    new_path = tmp_path / "new.xlsx"
+    _write(ev, str(old_path))
+
+    page = _FakePage()
+    view = AppView(page)
+    view.ctl.load_event_from_file(str(old_path))
+    view.refresh()
+    view.tf_new.value = str(new_path)
+
+    view._on_generate(None)
+    assert "另存新檔名" in view._dlg.title.value
+    view._dlg.actions[1].on_click(None)
+
+    assert not os.path.exists(old_path)
+    assert os.path.exists(new_path)
+
+
+def test_generate_report_button(tmp_path):
+    slips = tmp_path / "調代課單"
+    slips.mkdir()
+    _write(samples.get("代課範例"), str(slips / "1001-a.xlsx"))
+    out = tmp_path / "record"
+
+    page = _FakePage()
+    view = AppView(page)
+    view.slips_folder.value = str(slips)
+    view.record_folder.value = str(out)
+
+    view._on_generate_report(None)
+    assert "個檔案" in view.status.value
+    assert os.path.isdir(out)

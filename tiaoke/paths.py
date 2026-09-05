@@ -25,6 +25,13 @@ def record_dir() -> str:
     return d
 
 
+def slips_dir() -> str:
+    """「調代課單」輸出資料夾：搜尋既有檔案／產製報表預設掃這裡。"""
+    d = os.path.join(app_dir(), "調代課單")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def default_db_path() -> str:
     return os.path.join(app_dir(), "調代課資料庫.json")
 

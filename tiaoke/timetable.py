@@ -42,6 +42,7 @@ class Slot:
     location: str = ""
     domain: str = ""        # 學習領域（此 PDF 無，保留空）
     note: str = ""          # 例：(彈性全學期)、(兼)＝兼課、(輔)＝輔導
+    co_teachers: list[str] = field(default_factory=list)  # 這節課協同教學的其他老師（教師配當表比對出來的）
 
 
 @dataclass
@@ -405,3 +406,116 @@ def _parse_cell(lines: list[str], class_vocab: set, room_vocab: set) -> dict | N
         "location": location.strip(),
         "note": "".join(notes),
     }
+
+
+# --------------------------------------------------------------------------
+# 協同教學（教師配當表）
+# --------------------------------------------------------------------------
+#
+# 「教師配當表」逐老師逐課程列出授課班級／課程名稱／學分數，其中「協同」欄標記
+# 兩位（以上）老師一起教同一堂課。這份表沒有星期／節次，只能靠跟已匯入的
+# 教師課表（PDF）比對「同班級、同課程、同星期節次」來確認真的是協同授課
+# （而不是同名課程但根本是不同時段各自上課，例如同一堂「專題實作」很多老師
+# 各自帶不同組別）。班級代碼兩邊常不一樣（配當表用簡稱如「職二」，課表用
+# 全稱如「綜職二」），用「簡稱各字依序出現在全稱裡」判斷是否同一班。
+
+_CO_TEACH_MARK = "協同"  # 涵蓋「協同」「專案協同」
+
+
+def parse_co_teaching_xlsx(path: str) -> list[tuple[str, str, str, str]]:
+    """讀教師配當表，回傳 [(教師, 授課班級簡稱, 課程名稱, 標記), ...]。
+
+    標記可能是 "協同"／"專案協同"／"分組"／其他代碼／空字串；
+    是否視為協同教學交給 `apply_co_teaching` 判斷。
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = _find_peidang_sheet(wb)
+
+    rows: list[tuple[str, str, str, str]] = []
+    cur_teacher = ""
+    for row in ws.iter_rows(min_row=3, values_only=True):
+        if len(row) < 7:
+            continue
+        name, klass, subject, mark = row[2], row[3], row[4], row[6]
+        if name:
+            cur_teacher = str(name).strip()
+        if not (cur_teacher and klass and subject):
+            continue
+        rows.append((cur_teacher, str(klass).strip(), str(subject).strip(),
+                    str(mark).strip() if mark else ""))
+    return rows
+
+
+def _find_peidang_sheet(wb):
+    """找表頭含「教師姓名」「授課班級」「課程名稱」的分頁。
+
+    有些配當表會把舊學期的表留在另一個分頁、表頭長得一模一樣（只是「課程科別」
+    欄位在新表已經沒在用，協同/分組標記改擠到隔壁欄），所以不能只憑表頭判斷，
+    要選「協同」「分組」標記出現次數最多的那個分頁，才是目前學期真正在用的。
+    """
+    candidates = []
+    for ws in wb.worksheets:
+        header_ok = any(
+            row and "教師姓名" in row and "授課班級" in row and "課程名稱" in row
+            for row in ws.iter_rows(min_row=1, max_row=3, values_only=True)
+        )
+        if not header_ok:
+            continue
+        mark_count = sum(
+            1 for row in ws.iter_rows(min_row=3, values_only=True)
+            for v in row if isinstance(v, str) and ("協同" in v or "分組" in v)
+        )
+        candidates.append((mark_count, ws))
+    if not candidates:
+        return wb.worksheets[-1]
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
+def _klass_matches(short: str, full: str) -> bool:
+    """配當表簡稱（'職二'）跟課表全稱（'綜職二'）是否同一班：
+    簡稱各字依序（可不連續）出現在全稱裡即可。"""
+    it = iter(full)
+    return all(ch in it for ch in short)
+
+
+def apply_co_teaching(timetable: Timetable, rows: list[tuple[str, str, str, str]]) -> int:
+    """用配當表資料比對 timetable 裡的實際節次，把確認協同的 Slot 標上 co_teachers。
+
+    規則：同一 (班級簡稱, 課程名稱) 至少 2 位不同老師、且至少一邊標了「(專案)協同」，
+    才去查課表；查到同班級全稱、同星期、同節次有 2 位以上老師才算數（見模組說明）。
+    回傳被標記／更新的 Slot 數。
+    """
+    groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for teacher, klass_short, subject, mark in rows:
+        groups.setdefault((klass_short, subject), []).append((teacher, mark))
+
+    touched = 0
+    for (klass_short, subject), entries in groups.items():
+        distinct_teachers = {t for t, _m in entries}
+        if len(distinct_teachers) < 2:
+            continue
+        if not any(_CO_TEACH_MARK in mark for _t, mark in entries):
+            continue
+
+        by_slot: dict[tuple, list[tuple[str, Slot]]] = {}
+        for teacher in distinct_teachers:
+            t = timetable.teachers.get(teacher)
+            if not t:
+                continue
+            for s in t.slots:
+                if s.subject == subject and _klass_matches(klass_short, s.klass):
+                    by_slot.setdefault((s.klass, s.weekday, s.period), []).append((teacher, s))
+
+        for occs in by_slot.values():
+            names = sorted({teacher for teacher, _s in occs})
+            if len(names) < 2:
+                continue
+            for teacher, s in occs:
+                others = [n for n in names if n != teacher]
+                if s.co_teachers != others:
+                    s.co_teachers = others
+                    touched += 1
+    return touched

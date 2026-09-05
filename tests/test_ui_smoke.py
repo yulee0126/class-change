@@ -9,7 +9,8 @@ import pytest
 ft = pytest.importorskip("flet")
 
 from tiaoke import samples
-from tiaoke.ui.app import AppView, _SlipSearch, _TimetableEditor, main  # noqa: E402
+from tiaoke.timetable import Slot, TeacherTable, Timetable
+from tiaoke.ui.app import AppView, _SlipSearch, _TimetableEditor, _TimetableImport, main  # noqa: E402
 from tiaoke.ui.controller import AppController  # noqa: E402
 from tiaoke.xlsx_writer import write_sheet  # noqa: E402
 
@@ -186,3 +187,33 @@ def test_generate_report_button(tmp_path):
     view._on_generate_report(None)
     assert "個檔案" in view.status.value
     assert os.path.isdir(out)
+
+
+def test_timetable_import_reads_co_teaching_and_marks_slots(tmp_path):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["115-1教師配課一覽表"])
+    ws.append(["序號", "職稱", "教師姓名", "授課班級", "課程名稱", "課程科別",
+              "學分數", "基本節數", "兼課節數", "授課總數"])
+    ws.append([1, "老師", "趙瑋", "職二", "基礎雜糧加工實作", 3, "協同", 12, 3, 15])
+    ws.append([2, "老師", "周蓁妍", "職二", "基礎雜糧加工實作", 3, "協同", 8, 4, 12])
+    path = tmp_path / "配當表.xlsx"
+    wb.save(path)
+
+    ctl = AppController()
+    ctl.timetable = Timetable()
+    ctl.timetable.teachers["趙瑋"] = TeacherTable(name="趙瑋", slots=[
+        Slot(2, 5, "基礎雜糧加工實作", "綜職二")])
+    ctl.timetable.teachers["周蓁妍"] = TeacherTable(name="周蓁妍", slots=[
+        Slot(2, 5, "基礎雜糧加工實作", "綜職二")])
+    settings = types.SimpleNamespace(timetable_path="", save=lambda: None)
+    msgs = []
+    importer = _TimetableImport(ctl, settings, on_changed=msgs.append)
+
+    importer.co_path.value = str(path)
+    importer._read_co_teaching(None)
+
+    assert ctl.timetable.teachers["趙瑋"].slots[0].co_teachers == ["周蓁妍"]
+    assert msgs and "協同" in msgs[-1]
+    assert "標記 2 個節次" in importer.status.value

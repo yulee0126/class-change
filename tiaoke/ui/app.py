@@ -1027,6 +1027,7 @@ class _TimetableImport(ft.Column):
         self.settings = settings
         self.on_changed = on_changed
         self.pdf_path = ft.TextField(hint_text="教師課表 PDF 路徑", dense=True, expand=True)
+        self.co_path = ft.TextField(hint_text="教師配當表路徑（協同教學）", dense=True, expand=True)
         self.status = ft.Text("", size=11, color=_HINT)
         self.confirm = ft.Column(spacing=4, tight=True, visible=False)
         self.controls = [
@@ -1034,6 +1035,11 @@ class _TimetableImport(ft.Column):
             _hint("讀教師課表 PDF → 填調課／代課時，該老師的課可一鍵帶入。"),
             ft.Row([self.pdf_path,
                     ft.IconButton(ft.Icons.UPLOAD_FILE, tooltip="讀取", on_click=self._read)]),
+            _hint("讀教師配當表（.xlsx，需先匯入課表）→ 比對出「協同」課的節次，\n"
+                  "調課／代課表單會自動帶出協同老師。讀完會直接存回目前的課表 JSON。"),
+            ft.Row([self.co_path,
+                    ft.IconButton(ft.Icons.UPLOAD_FILE, tooltip="讀取並套用",
+                                  on_click=self._read_co_teaching)]),
             self.status,
             self.confirm,
         ]
@@ -1078,6 +1084,32 @@ class _TimetableImport(ft.Column):
         self.confirm.visible = True
         self.status.value = ""
         self.update()
+
+    def _read_co_teaching(self, _e) -> None:
+        path = (self.co_path.value or "").strip()
+        if not path:
+            self.status.value = "請先填配當表路徑"
+            _safe_update(self)
+            return
+        try:
+            touched = self.ctl.parse_co_teaching(path)
+        except Exception as exc:  # noqa: BLE001
+            self.status.value = f"讀取失敗：{exc}"
+            _safe_update(self)
+            return
+        msg = f"已標記 {touched} 個節次為協同教學"
+        saved_path = self.settings.timetable_path
+        if saved_path:
+            try:
+                self.ctl.save_timetable_to(saved_path)
+                msg += f"，已存回 {saved_path}"
+            except OSError as exc:
+                msg += f"（存回課表檔失敗：{exc}）"
+        else:
+            msg += "（目前課表還沒存檔，關掉程式就沒了）"
+        self.status.value = msg
+        _safe_update(self)
+        self.on_changed(msg)
 
     def _save_apply(self, _e) -> None:
         try:

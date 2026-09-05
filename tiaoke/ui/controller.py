@@ -109,6 +109,20 @@ class AppController:
     def load_timetable(self, path: str) -> None:
         self.timetable = storage.load_timetable(path)
 
+    def parse_co_teaching(self, path: str) -> int:
+        """讀教師配當表，比對目前課表標出協同教學的節次。回傳標記到的節次數。
+
+        直接套用到 self.timetable（不是像 PDF 匯入那樣先暫存再問），因為這只是
+        替既有課表補標記，不會整份換掉；呼叫端要記得另外存回 JSON。
+        """
+        from .. import timetable as _tt
+        if self.timetable is None:
+            raise ValueError("請先匯入教師課表 PDF，才能比對協同教學的節次。")
+        rows = _tt.parse_co_teaching_xlsx(path)
+        if not rows:
+            raise ValueError("讀不到配當表資料（找不到教師姓名／授課班級／課程名稱欄位）。")
+        return _tt.apply_co_teaching(self.timetable, rows)
+
     def timetable_slots(self, teacher: str, date: datetime.date | None):
         """某老師在某日期（換算星期）的課表 slot 清單。"""
         if not self.timetable or not teacher or date is None:

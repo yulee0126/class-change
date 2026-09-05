@@ -4,7 +4,7 @@ import os
 import pytest
 
 from tiaoke import storage, timetable as tt
-from tiaoke.timetable import Slot, TeacherTable, Timetable, _parse_cell
+from tiaoke.timetable import Slot, TeacherTable, Timetable, _klass_matches, _parse_cell
 from tiaoke.ui.controller import AppController
 
 D = datetime.date
@@ -12,6 +12,10 @@ D = datetime.date
 # 這台機器上的實體 PDF（若不在則跳過相關測試）
 _PDF = r"C:\Users\lolola\Desktop\1151教師課表_正式公布.pdf"
 _HAS_PDF = os.path.exists(_PDF)
+
+# 這台機器上的實體教師配當表（若不在則跳過相關測試）
+_PEIDANG = r"C:\Users\lolola\Desktop\115-1教師配當表簽稿.xlsx"
+_HAS_PEIDANG = os.path.exists(_PEIDANG)
 
 # 從真實 PDF 掃出來的班級／地點詞彙（測 _parse_cell）
 _CLASSES = {"園藝一", "園藝二", "園藝三", "高一甲", "高二甲", "商經一",
@@ -153,6 +157,37 @@ def test_controller_edit_timetable_slot_creates_teacher_and_timetable():
     assert c.timetable_teacher_table("新老師").slot_group(2, 1)[0].subject == "化學"
 
 
+def test_controller_parse_co_teaching_requires_timetable_first(tmp_path):
+    c = AppController()
+    path = tmp_path / "配當表.xlsx"
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["header"])
+    wb.save(path)
+    with pytest.raises(ValueError, match="先匯入教師課表"):
+        c.parse_co_teaching(str(path))
+
+
+def test_controller_parse_co_teaching_applies_to_timetable(tmp_path):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["115-1教師配課一覽表"])
+    ws.append(["序號", "職稱", "教師姓名", "授課班級", "課程名稱", "課程科別",
+              "學分數", "基本節數", "兼課節數", "授課總數"])
+    ws.append([1, "老師", "趙瑋", "職二", "基礎雜糧加工實作", 3, "協同", 12, 3, 15])
+    ws.append([2, "老師", "周蓁妍", "職二", "基礎雜糧加工實作", 3, "協同", 8, 4, 12])
+    path = tmp_path / "配當表.xlsx"
+    wb.save(path)
+
+    c = AppController()
+    c.timetable = _co_teach_timetable()
+    touched = c.parse_co_teaching(str(path))
+    assert touched == 4
+    assert c.timetable.teachers["趙瑋"].slots[0].co_teachers == ["周蓁妍"]
+
+
 def test_controller_save_timetable_to(tmp_path):
     c = AppController()
     assert c.save_timetable_to(str(tmp_path / "x.json")) is None   # 沒課表
@@ -162,6 +197,147 @@ def test_controller_save_timetable_to(tmp_path):
     assert path and os.path.exists(path)
     back = storage.load_timetable(path)
     assert back.teachers["王"].slots[0].subject == "國文"
+
+
+def test_klass_matches_short_code_against_full_name():
+    assert _klass_matches("職二", "綜職二")
+    assert _klass_matches("園一", "園藝一")
+    assert _klass_matches("畜二", "畜保二")
+    assert _klass_matches("工二", "加工二")
+    assert not _klass_matches("園二", "高二")     # 字不對
+    assert not _klass_matches("二一", "一二")     # 順序不對
+
+
+def _co_teach_timetable() -> Timetable:
+    table = Timetable()
+    table.teachers["趙瑋"] = TeacherTable(name="趙瑋", slots=[
+        Slot(2, 5, "基礎雜糧加工實作", "綜職二"),
+        Slot(2, 6, "基礎雜糧加工實作", "綜職二"),
+    ])
+    table.teachers["周蓁妍"] = TeacherTable(name="周蓁妍", slots=[
+        Slot(2, 5, "基礎雜糧加工實作", "綜職二"),
+        Slot(2, 6, "基礎雜糧加工實作", "綜職二"),
+    ])
+    return table
+
+
+def test_apply_co_teaching_links_matching_slot():
+    table = _co_teach_timetable()
+    rows = [
+        ("趙瑋", "職二", "基礎雜糧加工實作", "協同"),
+        ("周蓁妍", "職二", "基礎雜糧加工實作", "協同"),
+    ]
+    touched = tt.apply_co_teaching(table, rows)
+    assert touched == 4  # 兩位老師各 2 節
+    for name in ("趙瑋", "周蓁妍"):
+        other = "周蓁妍" if name == "趙瑋" else "趙瑋"
+        for s in table.teachers[name].slots:
+            assert s.co_teachers == [other]
+
+
+def test_apply_co_teaching_confirms_even_if_only_one_side_flagged():
+    """配當表常常只有一邊標協同，另一邊完全沒標記——只要同節次對得上就該算數。"""
+    table = _co_teach_timetable()
+    rows = [
+        ("趙瑋", "職二", "基礎雜糧加工實作", "協同"),
+        ("周蓁妍", "職二", "基礎雜糧加工實作", ""),  # 沒標記
+    ]
+    touched = tt.apply_co_teaching(table, rows)
+    assert touched == 4
+
+
+def test_apply_co_teaching_rejects_without_any_co_teach_flag():
+    """兩位老師同班同課，但配當表完全沒標協同（例如各自帶不同組的專題）→ 不算協同。"""
+    table = _co_teach_timetable()
+    rows = [
+        ("趙瑋", "職二", "基礎雜糧加工實作", ""),
+        ("周蓁妍", "職二", "基礎雜糧加工實作", ""),
+    ]
+    touched = tt.apply_co_teaching(table, rows)
+    assert touched == 0
+    for name in ("趙瑋", "周蓁妍"):
+        assert all(s.co_teachers == [] for s in table.teachers[name].slots)
+
+
+def test_apply_co_teaching_rejects_when_periods_dont_actually_match():
+    """同班同課、有標協同，但實際課表節次對不上（例如各自不同時段帶開）→ 不算協同。"""
+    table = Timetable()
+    table.teachers["甲"] = TeacherTable(name="甲", slots=[Slot(1, 1, "專題實作", "畜二")])
+    table.teachers["乙"] = TeacherTable(name="乙", slots=[Slot(3, 4, "專題實作", "畜二")])
+    rows = [
+        ("甲", "畜二", "專題實作", "協同"),
+        ("乙", "畜二", "專題實作", "協同"),
+    ]
+    touched = tt.apply_co_teaching(table, rows)
+    assert touched == 0
+
+
+def test_parse_co_teaching_xlsx(tmp_path):
+    """欄位順序照真實檔案：G 欄（index 6）是協同/分組標記，不是「課程科別」。"""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["115-1教師配課一覽表"])
+    ws.append(["序號", "職稱", "教師姓名", "授課班級", "課程名稱", "課程科別",
+              "學分數", "基本節數", "兼課節數", "授課總數"])
+    ws.append([1, "老師", "趙瑋", "職二", "基礎雜糧加工實作", 3, "協同", 12, 3, 15])
+    ws.append([None, None, None, "職三", "雜糧作物加工實習", 3, None, None, None, None])
+    ws.append([2, "老師", "周蓁妍", "職二", "基礎雜糧加工實作", 3, "協同", 8, 4, 12])
+    path = tmp_path / "配當表.xlsx"
+    wb.save(path)
+
+    rows = tt.parse_co_teaching_xlsx(str(path))
+    assert ("趙瑋", "職二", "基礎雜糧加工實作", "協同") in rows
+    assert ("趙瑋", "職三", "雜糧作物加工實習", "") in rows
+    assert ("周蓁妍", "職二", "基礎雜糧加工實作", "協同") in rows
+
+
+def test_parse_co_teaching_xlsx_picks_sheet_with_most_markers(tmp_path):
+    """同一活頁簿裡若有舊學期分頁（表頭一樣但沒有協同標記），要挑對現在在用的那個。"""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    old = wb.active
+    old.title = "工作表1"
+    header = ["序號", "職稱", "教師姓名", "授課班級", "課程名稱", "課程科別", "學分數",
+             "基本節數", "兼課節數", "授課總數"]
+    old.append(["114-1教師配課一覽表"])
+    old.append(header)
+    old.append([1, "老師", "藍秋月", "園一", "植物栽培實習", "園藝", 3, 8, 4, 11])
+
+    new = wb.create_sheet("工作表2")
+    new.append(["115-1教師配課一覽表"])
+    new.append(header)
+    new.append([1, "老師", "趙瑋", "職二", "基礎雜糧加工實作", 3, "協同", 12, 3, 15])
+    new.append([2, "老師", "周蓁妍", "職二", "基礎雜糧加工實作", 3, "協同", 8, 4, 12])
+
+    path = tmp_path / "配當表.xlsx"
+    wb.save(path)
+
+    rows = tt.parse_co_teaching_xlsx(str(path))
+    assert ("趙瑋", "職二", "基礎雜糧加工實作", "協同") in rows
+    assert not any(r[0] == "藍秋月" for r in rows)
+
+
+@pytest.mark.skipif(not (_HAS_PEIDANG and _HAS_PDF), reason="找不到實體配當表或課表 PDF")
+def test_apply_co_teaching_real_files():
+    table = tt.parse_pdf(_PDF)
+    rows = tt.parse_co_teaching_xlsx(_PEIDANG)
+    touched = tt.apply_co_teaching(table, rows)
+    assert touched > 0
+
+    zhao = table.teachers.get("趙瑋")
+    zhen = table.teachers.get("周蓁妍")
+    assert zhao and zhen
+    linked = [s for s in zhao.slots if s.subject == "基礎雜糧加工實作" and s.co_teachers]
+    assert linked and all(s.co_teachers == ["周蓁妍"] for s in linked)
+    linked_back = [s for s in zhen.slots if s.subject == "基礎雜糧加工實作" and s.co_teachers]
+    assert linked_back and all(s.co_teachers == ["趙瑋"] for s in linked_back)
+
+    # 已知的「同課程但各自不同節次」假陽性案例不該被標記
+    for name in table.teachers:
+        for s in table.teachers[name].slots:
+            if s.subject == "專題初探" and "畜" in s.klass:
+                assert s.co_teachers == []
 
 
 def test_controller_timetable_slots_weekday_mapping():

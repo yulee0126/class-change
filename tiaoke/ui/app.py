@@ -821,6 +821,7 @@ class _LegForm(ft.Container):
             self.db = _DateField(page, "乙原本日期", ini.get("date_b") or today, width=130,
                                  on_change=self._sync)
             self.pb = _period_dd(ini.get("period_b"))
+            self.co_warn = ft.Text("", size=11, color=ft.Colors.ORANGE_800)
             if kind == "swapsub":
                 self.stx = nf("代課老師", "")
                 body = [
@@ -845,6 +846,7 @@ class _LegForm(ft.Container):
                 ft.Row([self.tb.control, self.sb, self.db.control, self.pb], wrap=True,
                        vertical_alignment=ft.CrossAxisAlignment.START),
                 self.pick_b,
+                self.co_warn,
             ]
             if self.stx is not None:
                 body += [
@@ -905,9 +907,31 @@ class _LegForm(ft.Container):
         if self.kind in ("swap", "swapsub"):
             self.pick_a.controls = self._pick_ctrls(self.ta.value, self.da, "a")
             self.pick_b.controls = self._pick_ctrls(self.tb.value, self.db, "b")
+            self._detect_co_teach_swap()
         else:
             self.pick_a.controls = self._pick_ctrls(self.ot.value, self.dd, "s")
             self._detect_co_teach()
+
+    def _detect_co_teach_swap(self) -> None:
+        self.co_warn.value = ""
+        if self.ctl is None:
+            return
+        msgs = []
+        for label, tf_, df_, pf_ in (("甲", self.ta, self.da, self.pa),
+                                     ("乙", self.tb, self.db, self.pb)):
+            teacher = tf_.value.strip()
+            try:
+                d = df_.get()
+            except ValueError:
+                d = None
+            period_txt = str(pf_.value or "").strip()
+            if not (teacher and d and period_txt.isdigit()):
+                continue
+            others = self.ctl.co_teachers_of(teacher, d, int(period_txt))
+            if others:
+                msgs.append(f"{label}老師（{teacher}）這節是協同課，與{'、'.join(others)}老師一起教")
+        if msgs:
+            self.co_warn.value = "⚠ " + "；".join(msgs) + "——要一起調課的話，建議改用左上角的「協作調課」"
 
     def _detect_co_teach(self) -> None:
         self.co_hint.value = ""
@@ -948,6 +972,8 @@ class _LegForm(ft.Container):
         row = ft.Row(wrap=True, spacing=4, run_spacing=2)
         for s in slots:
             label = f"第{s.period}節 {s.subject}" + (f"／{s.klass}" if s.klass else "")
+            if s.co_teachers:
+                label += "　🤝協同"
             if want and s.klass == want:
                 btn = ft.Button(label, on_click=lambda e, s=s, side=side: self._apply_slot(side, s),
                                 style=ft.ButtonStyle(bgcolor=ft.Colors.RED_100,

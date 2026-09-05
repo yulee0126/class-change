@@ -1,6 +1,7 @@
 """GUI 冒煙測試：以假的 Page 建構 AppView，確認控制項組得起來、
 refresh() 不炸。視覺仍需在真實環境檢視。"""
 
+import datetime
 import os
 import types
 
@@ -302,3 +303,50 @@ def test_sub_form_detects_co_teach_and_marks_independent_teaching():
 
     slips = view.ctl.preview()
     assert slips.teacher_count == 2
+
+
+def test_plain_swap_form_warns_when_picked_slot_is_co_taught():
+    """使用者在普通「新增調課」選到協同課時，要提醒改用「協作調課」（不能默默漏掉另一位）。"""
+    from tiaoke.timetable import Slot as TTSlot, TeacherTable, Timetable
+
+    page = _FakePage()
+    view = AppView(page)
+    view.ctl.timetable = Timetable()
+    view.ctl.timetable.teachers["趙瑋"] = TeacherTable(name="趙瑋", slots=[
+        TTSlot(2, 5, "基礎雜糧加工實作", "綜職二", co_teachers=["周蓁妍"]),
+    ])
+    view.ctl.new_event()
+    view.ctl.update_event_fields(originator="趙瑋", form_no="手動")
+
+    view._open_leg_form("swap")
+    form = view._leg_form
+    assert form.co_warn.value == ""  # 甲老師還沒填，還不用警告
+
+    # 2026-09-08 是星期二
+    form.ta.field.value = "趙瑋"
+    form.da.field.value = "2026-09-08"
+    form.pa.value = "5"
+    form._sync()
+
+    assert "趙瑋" in form.co_warn.value
+    assert "周蓁妍" in form.co_warn.value
+    assert "協作調課" in form.co_warn.value
+
+    # 點課表帶出的按鈕（模擬使用者點選）也會觸發同樣的警告
+    form2 = view._leg_form = type(form)(
+        view.page, "swap", view._submit_leg, view._cancel_leg,
+        originator="趙瑋", ctl=view.ctl)
+    form2.ta.field.value = "趙瑋"
+    form2.da.field.value = "2026-09-08"  # 先選日期，畫面上才會列出當天的課可以點
+    form2._sync()
+    slot = view.ctl.timetable_slots("趙瑋", datetime.date(2026, 9, 8))[0]
+    assert slot.co_teachers == ["周蓁妍"]
+    form2._apply_slot("a", slot)
+    assert "協作調課" in form2.co_warn.value
+
+    # 選到不是協同課的節次就不該有警告
+    form.ta.field.value = "王小明"
+    form.da.field.value = "2026-09-08"
+    form.pa.value = "1"
+    form._sync()
+    assert form.co_warn.value == ""

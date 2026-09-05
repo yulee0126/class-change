@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from tiaoke import timetable as tt
+from tiaoke import storage, timetable as tt
 from tiaoke.timetable import Slot, TeacherTable, Timetable, _parse_cell
 from tiaoke.ui.controller import AppController
 
@@ -91,6 +91,77 @@ def test_timetable_round_trip():
     assert back.teachers["余瑞文"].title == "兼課教師"
     assert back.slots_for("余瑞文", 1)[0].subject == "健康與護理"
     assert back.slots_for("余瑞文", 3)[0].klass == "園藝一"
+
+
+def test_slot_group_reads_and_overwrites_combined_class():
+    t = TeacherTable(name="王", slots=[
+        Slot(1, 3, "客語", "加工一"), Slot(1, 3, "客語", "商經一"),
+        Slot(1, 4, "國文", "高一甲"),
+    ])
+    assert {s.klass for s in t.slot_group(1, 3)} == {"加工一", "商經一"}
+    assert len(t.slot_group(1, 4)) == 1
+
+    t.set_slot_group(1, 3, "客語(四縣腔)", ["加工一", "餐飲一"], "語言教室", "(兼)")
+    grp = t.slot_group(1, 3)
+    assert {s.klass for s in grp} == {"加工一", "餐飲一"}
+    assert all(s.subject == "客語(四縣腔)" and s.location == "語言教室" and s.note == "(兼)"
+              for s in grp)
+    # 沒動到的節次不受影響
+    assert len(t.slot_group(1, 4)) == 1
+
+
+def test_set_slot_group_single_class():
+    t = TeacherTable(name="王")
+    t.set_slot_group(2, 5, "數學", ["高二甲"])
+    assert t.slots == [Slot(2, 5, "數學", "高二甲", "", "")]
+
+
+def test_delete_slot_group():
+    t = TeacherTable(name="王", slots=[
+        Slot(1, 3, "客語", "加工一"), Slot(1, 3, "客語", "商經一"),
+        Slot(1, 4, "國文", "高一甲"),
+    ])
+    t.delete_slot_group(1, 3)
+    assert t.slot_group(1, 3) == []
+    assert len(t.slots) == 1
+
+
+def test_controller_edit_and_delete_timetable_slot():
+    c = AppController()
+    c.timetable = Timetable()
+    c.timetable.teachers["王"] = TeacherTable(name="王", slots=[Slot(1, 2, "國文", "高一甲")])
+
+    assert c.timetable_teacher_table("王").slots == [Slot(1, 2, "國文", "高一甲", "", "")]
+    assert c.timetable_teacher_table("不存在") is None
+    assert AppController().timetable_teacher_table("王") is None
+
+    c.edit_timetable_slot("王", 1, 2, subject="國文", klasses=["高一甲", "高一乙"],
+                          location="", note="(兼)")
+    grp = c.timetable_teacher_table("王").slot_group(1, 2)
+    assert {s.klass for s in grp} == {"高一甲", "高一乙"}
+    assert all(s.note == "(兼)" for s in grp)
+
+    c.delete_timetable_slot("王", 1, 2)
+    assert c.timetable_teacher_table("王").slot_group(1, 2) == []
+
+
+def test_controller_edit_timetable_slot_creates_teacher_and_timetable():
+    c = AppController()
+    assert c.timetable is None
+    c.edit_timetable_slot("新老師", 2, 1, subject="化學", klasses=["高三甲"])
+    assert c.timetable is not None
+    assert c.timetable_teacher_table("新老師").slot_group(2, 1)[0].subject == "化學"
+
+
+def test_controller_save_timetable_to(tmp_path):
+    c = AppController()
+    assert c.save_timetable_to(str(tmp_path / "x.json")) is None   # 沒課表
+    c.timetable = Timetable()
+    c.timetable.teachers["王"] = TeacherTable(name="王", slots=[Slot(1, 1, "國文", "高一甲")])
+    path = c.save_timetable_to(str(tmp_path / "課表.json"))
+    assert path and os.path.exists(path)
+    back = storage.load_timetable(path)
+    assert back.teachers["王"].slots[0].subject == "國文"
 
 
 def test_controller_timetable_slots_weekday_mapping():

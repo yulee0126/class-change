@@ -187,7 +187,7 @@ class AppView:
                 self.event_list,
                 ft.Divider(),
                 ft.ExpansionTile(
-                    title=ft.Text("進階：專案存檔．課表匯入"),
+                    title=ft.Text("進階：專案存檔．課表匯入／校對"),
                     tile_padding=ft.Padding(0, 0, 0, 0),
                     controls=[
                         _hint("儲存＝同時存一個 .json（可再編輯）和一個 .xlsx（所有單合在一個 Excel）。"),
@@ -208,6 +208,8 @@ class AppView:
                                   on_click=self._on_rebuild_stats),
                         ft.Divider(),
                         _TimetableImport(self.ctl, self.settings, self._on_tt_changed),
+                        ft.Divider(),
+                        _TimetableEditor(self.ctl, self.settings, self._on_tt_changed),
                     ],
                 ),
             ], scroll=ft.ScrollMode.AUTO),
@@ -1052,3 +1054,167 @@ class _TimetableImport(ft.Column):
         self._refresh()
         self.update()
         self.on_changed(msg)
+
+
+_WEEKDAY_LABELS = ["一", "二", "三", "四", "五"]
+
+
+class _TimetableEditor(ft.Column):
+    """課表校對：選老師、選星期 → 逐節核對／修改，存回課表 JSON。"""
+
+    def __init__(self, ctl, settings, on_changed) -> None:
+        super().__init__(spacing=4, tight=True)
+        self.ctl = ctl
+        self.settings = settings
+        self.on_changed = on_changed
+        self.weekday = 1
+        self._edit_period: int | None = None
+
+        self.teacher = _NameField("老師", "", ctl.timetable_teacher_names(),
+                                  width=170, on_change=self._on_teacher_change)
+        self.wd_row = ft.Row(spacing=2, wrap=True)
+        self.body = ft.Column(spacing=2, tight=True)
+        self.save_path = ft.TextField(label="存到", dense=True, expand=True,
+                                      value=settings.timetable_path)
+        self.status = ft.Text("", size=11, color=_HINT)
+
+        self.controls = [
+            ft.Text("課表校對", weight=ft.FontWeight.BOLD),
+            _hint("選老師、選星期 → 逐節核對／修改科目・班級・地點・備註（例如 (兼)、(輔)）。"),
+            self.teacher.control,
+            self.wd_row,
+            self.body,
+            ft.Row([self.save_path,
+                    ft.IconButton(ft.Icons.SAVE, tooltip="存回課表檔", on_click=self._save)]),
+            self.status,
+        ]
+        self._render_weekdays()
+        self._render_body()
+
+    # ---- 畫面 ----------------------------------------------------
+    def _render_weekdays(self) -> None:
+        self.wd_row.controls = [
+            ft.TextButton(
+                f"星期{lab}", on_click=lambda e, w=i + 1: self._pick_weekday(w),
+                style=ft.ButtonStyle(
+                    bgcolor=ft.Colors.BLUE_100 if self.weekday == i + 1 else None),
+            )
+            for i, lab in enumerate(_WEEKDAY_LABELS)
+        ]
+
+    def _render_body(self) -> None:
+        self.body.controls.clear()
+        name = self.teacher.value.strip()
+        if not name:
+            self.body.controls.append(_hint("先選一位老師。"))
+            return
+        table = self.ctl.timetable_teacher_table(name)
+        for period in range(1, 11):
+            slots = table.slot_group(self.weekday, period) if table else []
+            self.body.controls.append(self._row(period, slots))
+            if self._edit_period == period:
+                self.body.controls.append(self._edit_form(period, slots))
+
+    def _row(self, period: int, slots: list) -> ft.Control:
+        if slots:
+            klass = "、".join(s.klass for s in slots if s.klass)
+            note = f" {slots[0].note}" if slots[0].note else ""
+            label = f"第{period}節　{slots[0].subject}" + (f"／{klass}" if klass else "") + note
+        else:
+            label = f"第{period}節　（空）"
+        return ft.Row([
+            ft.IconButton(ft.Icons.EDIT_OUTLINED, icon_size=16, tooltip="編輯這節",
+                          on_click=lambda e, p=period: self._open_edit(p)),
+            ft.Text(("✏ " if self._edit_period == period else "") + label,
+                    size=12, selectable=True),
+        ])
+
+    def _edit_form(self, period: int, slots: list) -> ft.Control:
+        f_subj = ft.TextField(label="科目", value=slots[0].subject if slots else "",
+                              dense=True, width=150)
+        f_klass = ft.TextField(label="班級（合班用、分隔）",
+                               value="、".join(s.klass for s in slots) if slots else "",
+                               dense=True, width=190)
+        f_loc = ft.TextField(label="地點", value=slots[0].location if slots else "",
+                             dense=True, width=120)
+        f_note = ft.TextField(label="備註（如 (兼)、(輔)）",
+                              value=slots[0].note if slots else "", dense=True, width=160)
+        actions = [
+            ft.Button("儲存", icon=ft.Icons.SAVE,
+                      on_click=lambda e: self._save_slot(period, f_subj, f_klass, f_loc, f_note)),
+        ]
+        if slots:
+            actions.append(ft.TextButton("刪除這節", icon=ft.Icons.DELETE_OUTLINE,
+                                         on_click=lambda e: self._delete_slot(period)))
+        actions.append(ft.TextButton("取消", on_click=lambda e: self._cancel_edit()))
+        return ft.Container(
+            padding=8, bgcolor=ft.Colors.BLUE_GREY_50, border_radius=6,
+            content=ft.Column([
+                ft.Row([f_subj, f_klass], wrap=True),
+                ft.Row([f_loc, f_note], wrap=True),
+                ft.Row(actions, wrap=True),
+            ], spacing=4, tight=True),
+        )
+
+    # ---- 事件 ----------------------------------------------------
+    def _pick_weekday(self, wd: int) -> None:
+        self.weekday = wd
+        self._edit_period = None
+        self._render_weekdays()
+        self._render_body()
+        _safe_update(self)
+
+    def _on_teacher_change(self) -> None:
+        self._edit_period = None
+        self._render_body()
+        _safe_update(self)
+
+    def _open_edit(self, period: int) -> None:
+        self._edit_period = period
+        self._render_body()
+        _safe_update(self)
+
+    def _cancel_edit(self) -> None:
+        self._edit_period = None
+        self._render_body()
+        _safe_update(self)
+
+    def _save_slot(self, period: int, f_subj, f_klass, f_loc, f_note) -> None:
+        name = self.teacher.value.strip()
+        if not name:
+            return
+        klasses = [k for k in re.split(r"[、/／,，]", f_klass.value or "") if k.strip()]
+        self.ctl.edit_timetable_slot(
+            name, self.weekday, period,
+            subject=f_subj.value or "", klasses=klasses,
+            location=f_loc.value or "", note=f_note.value or "",
+        )
+        self._edit_period = None
+        self._render_body()
+        _safe_update(self)
+        self.on_changed("已更新課表（記得按存檔存回課表檔）")
+
+    def _delete_slot(self, period: int) -> None:
+        name = self.teacher.value.strip()
+        if name:
+            self.ctl.delete_timetable_slot(name, self.weekday, period)
+        self._edit_period = None
+        self._render_body()
+        _safe_update(self)
+        self.on_changed("已刪除該節（記得按存檔存回課表檔）")
+
+    def _save(self, _e) -> None:
+        path = (self.save_path.value or "").strip()
+        if not path:
+            self.status.value = "請先填存檔路徑"
+            _safe_update(self.status)
+            return
+        saved = self.ctl.save_timetable_to(path)
+        if saved:
+            self.settings.timetable_path = saved
+            self.settings.save()
+            self.status.value = f"✓ 已存回：{saved}"
+        else:
+            self.status.value = "沒有課表可存（請先匯入或編輯至少一節）"
+        _safe_update(self.status)
+        self.on_changed(self.status.value)

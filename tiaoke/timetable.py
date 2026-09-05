@@ -55,6 +55,24 @@ class TeacherTable:
         return sorted((s for s in self.slots if s.weekday == weekday),
                       key=lambda s: s.period)
 
+    # ---- 課表校對 GUI 用：一格＝一個星期＋節次（合班課＝多個 Slot 共用同一格）----
+    def slot_group(self, weekday: int, period: int) -> list[Slot]:
+        return [s for s in self.slots if s.weekday == weekday and s.period == period]
+
+    def set_slot_group(self, weekday: int, period: int, subject: str,
+                       klasses: list[str], location: str = "", note: str = "") -> None:
+        """整格改寫：先刪同格舊資料，再依 klasses 逐一新增（多班＝合班課）。"""
+        self.slots = [s for s in self.slots
+                      if not (s.weekday == weekday and s.period == period)]
+        for k in (klasses or [""]):
+            self.slots.append(Slot(weekday=weekday, period=period, subject=subject,
+                                   klass=k, location=location, note=note))
+        self.slots.sort(key=lambda s: (s.weekday, s.period, s.klass))
+
+    def delete_slot_group(self, weekday: int, period: int) -> None:
+        self.slots = [s for s in self.slots
+                      if not (s.weekday == weekday and s.period == period)]
+
 
 @dataclass
 class Timetable:

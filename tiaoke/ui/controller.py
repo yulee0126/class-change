@@ -98,6 +98,38 @@ class AppController:
             return []
         return self.timetable.slots_for(teacher.strip(), wd)
 
+    def timetable_teacher_table(self, name: str):
+        """課表校對用：某老師目前的整份 TeacherTable（沒有課表／沒這位老師回傳 None）。"""
+        if not self.timetable or not (name or "").strip():
+            return None
+        return self.timetable.teachers.get(name.strip())
+
+    def edit_timetable_slot(self, teacher: str, weekday: int, period: int, *,
+                            subject: str, klasses: list[str],
+                            location: str = "", note: str = "") -> None:
+        """課表校對：整格改寫成給定內容（沒有課表就先建一份空的）。"""
+        from .. import timetable as _tt
+        teacher = teacher.strip()
+        if not teacher:
+            return
+        if self.timetable is None:
+            self.timetable = _tt.Timetable()
+        t = self.timetable.teachers.setdefault(teacher, _tt.TeacherTable(name=teacher))
+        t.set_slot_group(weekday, period, subject.strip(),
+                         [k.strip() for k in klasses if k.strip()],
+                         location.strip(), note.strip())
+
+    def delete_timetable_slot(self, teacher: str, weekday: int, period: int) -> None:
+        t = self.timetable_teacher_table(teacher)
+        if t:
+            t.delete_slot_group(weekday, period)
+
+    def save_timetable_to(self, path: str) -> str | None:
+        """把目前的課表存回 JSON（課表校對存檔用）。"""
+        if not self.timetable or not path:
+            return None
+        return storage.save_timetable(self.timetable, path)
+
     def timetable_teacher_names(self) -> list[str]:
         return self.timetable.teacher_names() if self.timetable else []
 

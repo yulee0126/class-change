@@ -10,7 +10,7 @@ from tiaoke.ui.controller import AppController
 D = datetime.date
 
 # 這台機器上的實體 PDF（若不在則跳過相關測試）
-_PDF = r"C:\Users\lolola\Desktop\調課代課程式\115-1教師課表(暫行).pdf"
+_PDF = r"C:\Users\lolola\Desktop\1151教師課表_正式公布.pdf"
 _HAS_PDF = os.path.exists(_PDF)
 
 # 從真實 PDF 掃出來的班級／地點詞彙（測 _parse_cell）
@@ -40,6 +40,34 @@ def test_parse_cell_multi_class_slash_split_across_lines():
     r = _parse_cell(["臺灣手語", "加工一/商", "經一/餐飲一/"], _CLASSES, set())
     assert r["subject"] == "臺灣手語"
     assert r["classes"] == ["加工一", "商經一", "餐飲一"]
+
+
+def test_parse_cell_extra_hours_mark_on_class():
+    r = _parse_cell(["農業概論", "園藝一(兼)", "園藝視聽教室"], _CLASSES, _ROOMS)
+    assert r["subject"] == "農業概論"
+    assert r["classes"] == ["園藝一"]
+    assert r["note"] == "(兼)"
+
+
+def test_parse_cell_extra_hours_mark_on_subject():
+    r = _parse_cell(["數位科技", "概論(兼)", "高二丁應"], _CLASSES | {"高二丁應"}, set())
+    assert r["subject"] == "數位科技概論"
+    assert r["classes"] == ["高二丁應"]
+    assert r["note"] == "(兼)"
+
+
+def test_parse_cell_extra_hours_mark_own_line():
+    r = _parse_cell(["應用數學", "(兼)", "畜保三"], _CLASSES | {"畜保三"}, set())
+    assert r["subject"] == "應用數學"
+    assert r["classes"] == ["畜保三"]
+    assert r["note"] == "(兼)"
+
+
+def test_parse_cell_tutoring_mark():
+    r = _parse_cell(["數學輔導", "課 (輔)", "高二甲"], _CLASSES | {"高二甲"}, set())
+    assert r["subject"] == "數學輔導課"
+    assert r["classes"] == ["高二甲"]
+    assert r["note"] == "(輔)"
 
 
 def test_parse_cell_class_in_middle():
@@ -86,12 +114,25 @@ def test_parse_real_pdf():
     table = tt.parse_pdf(_PDF)
     assert len(table.teachers) >= 80
     assert table.school == "國立關西高級中學"
-    assert table.valid_from == "2026-08-31"
+    assert table.valid_from == "2026-09-07"
     yu = table.teachers.get("余瑞文")
     assert yu and all(s.subject == "健康與護理" for s in yu.slots)
+    # 余瑞文全部課都是兼課（頁尾：基本鐘點0堂／兼課8堂）
+    assert all(s.note == "(兼)" for s in yu.slots)
     # 星期一應有 4 節
     assert len(yu.on(1)) == 4
-    # 空班級的比例應該很低
+    # 空班級的比例應該很低（這份 PDF 有少數幾格因跨行排版把 (兼) 黏進文字中間而解析失敗，
+    # 修正前的舊邏輯是 11.9%，修正後約 2.3%）
     empties = [s for t in table.teachers.values() for s in t.slots if not s.klass]
     total = sum(len(t.slots) for t in table.teachers.values())
-    assert len(empties) / total < 0.02
+    assert len(empties) / total < 0.03
+    # (兼)/(輔) 標記不應殘留在科目或班級文字裡（應已搬進 note）
+    for t in table.teachers.values():
+        for s in t.slots:
+            assert "(兼)" not in s.subject and "(兼)" not in s.klass
+            assert "(輔)" not in s.subject and "(輔)" not in s.klass
+    # 校內慣例：第八節一律算輔導，不論 PDF 該格是否印出 (輔)
+    for t in table.teachers.values():
+        for s in t.slots:
+            if s.period == 8:
+                assert "(輔)" in s.note

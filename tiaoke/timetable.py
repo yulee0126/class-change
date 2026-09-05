@@ -41,7 +41,7 @@ class Slot:
     klass: str
     location: str = ""
     domain: str = ""        # 學習領域（此 PDF 無，保留空）
-    note: str = ""          # 例：(彈性全學期)
+    note: str = ""          # 例：(彈性全學期)、(兼)＝兼課、(輔)＝輔導
 
 
 @dataclass
@@ -152,6 +152,10 @@ def parse_pdf(path: str) -> Timetable:
             if not parsed:
                 continue
             classes = parsed["classes"] or [""]
+            note = parsed["note"]
+            # 校內慣例：第八節一律算輔導，不論 PDF 該格是否印出 (輔) 字樣。
+            if period == 8 and "(輔)" not in note:
+                note += "(輔)"
             for kls in classes:
                 key = (weekday, period, parsed["subject"], kls)
                 if key in seen:
@@ -160,7 +164,7 @@ def parse_pdf(path: str) -> Timetable:
                 t.slots.append(Slot(
                     weekday=weekday, period=period,
                     subject=parsed["subject"], klass=kls,
-                    location=parsed["location"], note=parsed["note"],
+                    location=parsed["location"], note=note,
                 ))
         t.slots.sort(key=lambda s: (s.weekday, s.period, s.klass))
 
@@ -241,8 +245,10 @@ def _build_vocab(pages_cells: list) -> tuple[set, set]:
     for *_x, cells in pages_cells:
         for _p, _w, lines in cells:
             if len(lines) >= 2:
-                last_tokens[lines[-1]] += 1
-                last_tokens[lines[-2]] += 1
+                for tok in (lines[-1], lines[-2]):
+                    tok, _mark = _strip_mark(tok)
+                    if tok:
+                        last_tokens[tok] += 1
 
     classes, rooms = set(), set()
     for tok, cnt in last_tokens.items():
@@ -255,6 +261,18 @@ def _build_vocab(pages_cells: list) -> tuple[set, set]:
 
 _CLASS_RE = re.compile(
     r"^(高[一二三]|國[一二三])?[一-鿿]{0,3}[一二三四五六甲乙丙丁戊][技應餐商甲乙丙丁]?$")
+
+# 課名／班級後常黏著的鐘點標記：(兼)=兼課、(輔)=輔導（對應頁尾「基本鐘點／兼課／輔導」統計）。
+# PDF 版面換行時，標記可能單獨成一行，也可能直接黏在科目或班級文字後面。
+_MARK_RE = re.compile(r"[（(]\s*(兼|輔)\s*[）)]\s*$")
+
+
+def _strip_mark(line: str) -> tuple[str, str | None]:
+    """去掉行尾黏著的 (兼)/(輔) 標記，回傳 (去除後文字, 標記或 None)。"""
+    m = _MARK_RE.search(line)
+    if not m:
+        return line, None
+    return line[:m.start()].rstrip(), m.group(1)
 
 
 def _class_like(tok: str) -> bool:
@@ -303,10 +321,23 @@ def _parse_cell(lines: list[str], class_vocab: set, room_vocab: set) -> dict | N
     if not raw:
         return None
 
+    marks: list[str] = []
+    stripped: list[str] = []
+    for l in raw:
+        cleaned, mark = _strip_mark(l)
+        if mark:
+            marks.append(f"({mark})")
+        if cleaned:
+            stripped.append(cleaned)
+    raw = stripped
+    if not raw:
+        return None
+
     notes = [l for l in raw if l.startswith(("(", "（"))]
     raw = [l for l in raw if l not in notes]
     if not raw:
         return None
+    notes = marks + notes
 
     # 合班列常跨行斷開（'加工一/商' + '經一/餐飲一/'）→ 先接回來
     merged: list[str] = []

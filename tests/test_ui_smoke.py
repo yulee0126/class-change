@@ -257,3 +257,41 @@ def test_co_swap_form_end_to_end():
     assert len(legs) == 2
     assert {legs[0].teacher_a, legs[1].teacher_a} == {"趙瑋", "周蓁妍"}
     assert "協作調課" in view.status.value
+
+
+def test_sub_form_detects_co_teach_and_marks_independent_teaching():
+    from tiaoke.timetable import Slot as TTSlot, TeacherTable, Timetable
+
+    page = _FakePage()
+    view = AppView(page)
+    view.ctl.timetable = Timetable()
+    view.ctl.timetable.teachers["趙瑋"] = TeacherTable(name="趙瑋", slots=[
+        TTSlot(4, 5, "基礎雜糧加工實作", "綜職二", co_teachers=["周蓁妍"]),
+    ])
+    view.ctl.new_event()
+    view.ctl.update_event_fields(originator="趙瑋", form_no="手動")
+
+    view._open_leg_form("sub")
+    form = view._leg_form
+
+    # 2026-09-03 是星期四
+    form.ot.field.value = "趙瑋"
+    form.dd.field.value = "2026-09-03"
+    form.pp.value = "5"
+    form._sync()
+
+    assert form.st.value == "周蓁妍"           # 自動帶出建議代課（協同）老師
+    assert form.is_co_teach.value is True      # 自動勾選協同獨立授課
+    assert "協同" in form.co_hint.value
+
+    form.klass.value = "綜職二"
+    form.subj.value = "基礎雜糧加工實作"
+    form._submit(None)
+
+    assert view._leg_form is None
+    leg = view.ctl.current.legs[0]
+    assert leg.is_co_teach is True
+    assert leg.sub_teacher == "周蓁妍"
+
+    slips = view.ctl.preview()
+    assert slips.teacher_count == 2

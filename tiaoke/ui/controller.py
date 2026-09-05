@@ -324,12 +324,12 @@ class AppController:
 
     @staticmethod
     def _build_sub(klass, orig_teacher, subject, date, period, sub_teacher,
-                   from_swap=False) -> SubLeg:
+                   from_swap=False, is_co_teach=False) -> SubLeg:
         return SubLeg(
             klass=klass.strip(),
             orig_teacher=orig_teacher.strip(), subject=subject.strip(),
             slot=Slot(date, int(period)), sub_teacher=sub_teacher.strip(),
-            from_swap=from_swap,
+            from_swap=from_swap, is_co_teach=is_co_teach,
         )
 
     def co_teachers_of(self, teacher: str, date: datetime.date, period: int) -> list[str]:
@@ -425,6 +425,7 @@ class AppController:
             kind="sub", klass=leg.klass, orig_teacher=leg.orig_teacher,
             subject=leg.subject, date=leg.slot.date, period=leg.slot.period,
             sub_teacher=leg.sub_teacher, from_swap=leg.from_swap,
+            is_co_teach=leg.is_co_teach,
         )
 
     def add_sub_batch(self, *, orig_teacher: str,

@@ -61,3 +61,17 @@ def test_from_swap_survives_json_round_trip(tmp_path):
     back = storage.load_project(str(p))
     subs = [l for l in back.events[0].legs if isinstance(l, SubLeg)]
     assert sum(l.from_swap for l in subs) == 3
+
+
+def test_is_co_teach_survives_json_round_trip(tmp_path):
+    from tiaoke import storage
+    from tiaoke.models import Project
+    ev = Event("趙瑋", "病假", "手動", D(2026, 9, 1), legs=[
+        SubLeg("綜職二", "趙瑋", "基礎雜糧加工實作", Slot(D(2026, 9, 2), 5), "周蓁妍",
+              is_co_teach=True),
+    ])
+    proj = Project(events=[ev])
+    p = tmp_path / "p.json"
+    storage.save_project(proj, str(p))
+    back = storage.load_project(str(p))
+    assert back.events[0].legs[0].is_co_teach is True

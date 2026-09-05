@@ -93,17 +93,25 @@ def build(event: Event, timetable=None) -> list[Slip]:
         elif isinstance(leg, SubLeg):
             hl = leg.from_swap
             mark = _lookup_mark(timetable, leg.orig_teacher, leg.slot)
+            sub_name, orig_name = _bare(leg.sub_teacher), _bare(leg.orig_teacher)
+            if leg.is_co_teach:
+                note_orig = f"改由{sub_name}老師獨立授課（原協同）"
+                note_sub = f"獨立授課（原與{orig_name}老師協同）"
+                note_class = f"{sub_name}老師獨立授課（原協同）"
+            else:
+                note_orig = note_class = f"{sub_name}老師 代課"
+                note_sub = f"代 {orig_name}老師"
             tr(leg.orig_teacher).append(TeacherRow(
                 klass=leg.klass, new=None, subject=leg.subject, orig=leg.slot,
-                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl, mark=mark,
+                note=note_orig, highlight=hl, mark=mark,
             ))
             tr(leg.sub_teacher).append(TeacherRow(
                 klass=leg.klass, new=leg.slot, subject=leg.subject, orig=None,
-                note=f"代 {_bare(leg.orig_teacher)}老師", highlight=hl, mark=mark,
+                note=note_sub, highlight=hl, mark=mark,
             ))
             cr(leg.klass).append(ClassRow(
                 slot=leg.slot, subject=leg.subject,
-                note=f"{_bare(leg.sub_teacher)}老師 代課", highlight=hl, is_sub=True, mark=mark,
+                note=note_class, highlight=hl, is_sub=True, mark=mark,
             ))
         else:  # pragma: no cover - 防呆
             raise TypeError(f"未知的腳型別：{type(leg)!r}")

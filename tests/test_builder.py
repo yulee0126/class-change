@@ -93,6 +93,31 @@ def test_sub_leg_no_mark_without_timetable_or_match():
                     "余瑞文").rows[0].mark == ""
 
 
+def test_sub_leg_plain_wording_by_default():
+    ev = Event("余瑞文", "病假", "手動", D(2026, 9, 3), legs=[
+        SubLeg("電機一", "余瑞文", "健康與護理", Slot(D(2026, 9, 7), 1), "王小明"),
+    ])
+    slips = build(ev)
+    assert _teacher(slips, "余瑞文").rows[0].note == "王小明老師 代課"
+    assert _teacher(slips, "王小明").rows[0].note == "代 余瑞文老師"
+    assert _klass(slips, "電機一").rows[0].note == "王小明老師 代課"
+
+
+def test_sub_leg_co_teach_wording():
+    ev = Event("趙瑋", "病假", "手動", D(2026, 9, 1), legs=[
+        SubLeg("綜職二", "趙瑋", "基礎雜糧加工實作", Slot(D(2026, 9, 2), 5), "周蓁妍",
+              is_co_teach=True),
+    ])
+    slips = build(ev)
+    assert _teacher(slips, "趙瑋").rows[0].note == "改由周蓁妍老師獨立授課（原協同）"
+    assert _teacher(slips, "周蓁妍").rows[0].note == "獨立授課（原與趙瑋老師協同）"
+    assert _klass(slips, "綜職二").rows[0].note == "周蓁妍老師獨立授課（原協同）"
+    # 不該出現「代課」字樣
+    for slip in slips:
+        for row in slip.rows:
+            assert "代課" not in row.note and "代 " not in row.note
+
+
 def test_swap_leg_is_never_marked():
     ev = Event("余瑞文", "其他", "手動", D(2026, 2, 13), legs=[
         SwapLeg("高一甲", "余瑞文", "健康與護理", Slot(D(2026, 2, 23), 1),

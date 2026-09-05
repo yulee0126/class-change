@@ -55,6 +55,10 @@ class SubLeg:
 
     from_swap=True 表示這一節原本是「調課調入」的時段（發起人先把課調進來、
     之後又請假），教師單會反白標示並在 J 欄放代課老師簡稱（對照 炆明1150831）。
+
+    is_co_teach=True 表示 sub_teacher 其實是這節課原本的協同教師（兩人一起教，
+    現在其中一位請假、由協同的另一位獨立上課），不是外找的代課——備註措辭會
+    改成「獨立授課」而不是「代課」（見 P7 教師配當表／協同教學）。
     """
 
     klass: str
@@ -63,6 +67,7 @@ class SubLeg:
     slot: Slot
     sub_teacher: str
     from_swap: bool = False
+    is_co_teach: bool = False
 
     kind: str = field(default="sub", init=False)
 
@@ -182,6 +187,7 @@ def leg_to_dict(leg: Leg) -> dict:
         "slot": _slot_to_dict(leg.slot),
         "sub_teacher": leg.sub_teacher,
         "from_swap": leg.from_swap,
+        "is_co_teach": leg.is_co_teach,
     }
 
 
@@ -199,6 +205,7 @@ def leg_from_dict(d: dict) -> Leg:
         slot=_slot_from_dict(d["slot"]),
         sub_teacher=d["sub_teacher"],
         from_swap=d.get("from_swap", False),
+        is_co_teach=d.get("is_co_teach", False),
     )
 
 

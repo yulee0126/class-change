@@ -859,6 +859,10 @@ class _LegForm(ft.Container):
             self.from_swap = ft.Checkbox(
                 label="這一節是前面「調課」調進來、之後又請假的（會反白標示）",
                 value=bool(ini.get("from_swap")))
+            self.is_co_teach = ft.Checkbox(
+                label="協同獨立授課（代課老師其實是協同老師，備註改寫成「獨立授課」）",
+                value=bool(ini.get("is_co_teach")))
+            self.co_hint = ft.Text("", size=11, color=ft.Colors.GREEN_700)
             body = [
                 ft.Text(("修改" if editing else "新增") + "代課", weight=ft.FontWeight.BOLD),
                 _hint("某位老師某一節不能上，找人代，時間不變。"),
@@ -866,7 +870,9 @@ class _LegForm(ft.Container):
                         self.st.control], wrap=True,
                        vertical_alignment=ft.CrossAxisAlignment.START),
                 self.pick_a,
+                self.co_hint,
                 self.from_swap,
+                self.is_co_teach,
             ]
 
         self.err = ft.Text("", color=ft.Colors.RED_700)
@@ -899,6 +905,27 @@ class _LegForm(ft.Container):
             self.pick_b.controls = self._pick_ctrls(self.tb.value, self.db, "b")
         else:
             self.pick_a.controls = self._pick_ctrls(self.ot.value, self.dd, "s")
+            self._detect_co_teach()
+
+    def _detect_co_teach(self) -> None:
+        self.co_hint.value = ""
+        if self.ctl is None:
+            return
+        teacher = self.ot.value.strip()
+        try:
+            d = self.dd.get()
+        except ValueError:
+            d = None
+        period_txt = str(self.pp.value or "").strip()
+        if not (teacher and d and period_txt.isdigit()):
+            return
+        others = self.ctl.co_teachers_of(teacher, d, int(period_txt))
+        if not others:
+            return
+        if not self.st.value.strip():
+            self.st.field.value = others[0]
+            self.is_co_teach.value = True
+        self.co_hint.value = f"✓ 課表比對出這節是協同課，建議代課老師：{'、'.join(others)}"
 
     def _pick_ctrls(self, teacher, datefield, side) -> list:
         if self.ctl is None or not (teacher or "").strip():
@@ -969,6 +996,7 @@ class _LegForm(ft.Container):
                     date=self._req(self.dd), period=self._period(self.pp, "節次"),
                     sub_teacher=self.st.value or "",
                     from_swap=bool(self.from_swap.value),
+                    is_co_teach=bool(self.is_co_teach.value),
                 )
         except ValueError as exc:
             self.err.value = str(exc)

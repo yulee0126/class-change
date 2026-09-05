@@ -13,8 +13,14 @@
   · 兩個對調腳一邊 (klass, new, orig) 與 (klass, orig, new) 互相對應 → 配成一個 SwapLeg
   · 一個「被代課」與一個「代課」在同一 (klass, slot) → 配成一個 SubLeg
     （from_swap 由儲存格底色是否反白決定，不是文字）
-如果配不出（例如同一節被兩位老師同時頂替之類，超出目前資料模型能表示的範圍），
-視為整份解析失敗並丟出 ParseError，不回傳猜測、可能錯誤的資料。
+  · 協同教學（見 P7）：兩位協同老師一起跟同一位目標老師對調時，會各自登記一列
+    幾乎一樣的資料（同 klass/new/orig，只差老師名字），導致其中一邊配不到對象
+    （對方教師單只有一列）。若呼叫端有給 `timetable`（已跑過教師配當表比對），
+    會用 `Slot.co_teachers` 確認「這兩位是不是協同老師」，是的話就用同一個目標
+    老師/科目再展開一筆 SwapLeg，而不是直接判定解析失敗。
+如果還是配不出（例如同一節被兩位老師同時頂替、且查不到協同關係之類，超出目前
+資料模型能表示的範圍），視為整份解析失敗並丟出 ParseError，不回傳猜測、可能
+錯誤的資料。
 """
 
 from __future__ import annotations
@@ -40,7 +46,7 @@ class ParseError(Exception):
 
 # --------------------------------------------------------------------------
 
-def read_event(path: str, sheet_name: str | None = None) -> Event:
+def read_event(path: str, sheet_name: str | None = None, timetable=None) -> Event:
     wb = load_workbook(path, data_only=True)
     ws = wb[sheet_name] if sheet_name else wb.worksheets[0]
     fname = os.path.basename(path)
@@ -49,7 +55,7 @@ def read_event(path: str, sheet_name: str | None = None) -> Event:
     if not meta:
         raise ParseError(f"{fname}：找不到教師調代課通知單的版面，無法解析。")
 
-    legs, unmatched = _pair_entries(entries)
+    legs, unmatched = _pair_entries(entries, timetable)
     if unmatched:
         detail = "、".join(_describe(e) for e in unmatched)
         raise ParseError(
@@ -68,7 +74,7 @@ def read_event(path: str, sheet_name: str | None = None) -> Event:
     )
 
 
-def read_events(path: str) -> list[tuple[str, Event | None, str]]:
+def read_events(path: str, timetable=None) -> list[tuple[str, Event | None, str]]:
     """讀一個活頁簿裡所有分頁。回傳 [(分頁名, Event 或 None, 錯誤訊息或"")]。
 
     單一分頁解析失敗不影響其他分頁（供「產製報表」掃資料夾用）。
@@ -77,7 +83,7 @@ def read_events(path: str) -> list[tuple[str, Event | None, str]]:
     out: list[tuple[str, Event | None, str]] = []
     for ws in wb.worksheets:
         try:
-            out.append((ws.title, read_event(path, sheet_name=ws.title), ""))
+            out.append((ws.title, read_event(path, sheet_name=ws.title, timetable=timetable), ""))
         except ParseError as exc:
             out.append((ws.title, None, str(exc)))
     return out
@@ -182,7 +188,7 @@ def _detect_class_style(ws) -> str:
 # 把「調課後時間／原時間」列配對回 SwapLeg／SubLeg
 # --------------------------------------------------------------------------
 
-def _pair_entries(entries: list[dict]) -> tuple[list, list[dict]]:
+def _pair_entries(entries: list[dict], timetable=None) -> tuple[list, list[dict]]:
     swap_side = [e for e in entries if e["new"] and e["orig"]]
     sub_out = [e for e in entries if e["orig"] and not e["new"]]     # 被代課
     sub_in = [e for e in entries if e["new"] and not e["orig"]]      # 代課者
@@ -206,6 +212,24 @@ def _pair_entries(entries: list[dict]) -> tuple[list, list[dict]]:
                 ))
                 used[i] = used[j] = True
                 break
+
+    # 協同教學：兩位協同老師各自登記一列跟同一位目標老師對調，其中一邊配不到對象
+    # （對方教師單只有一列）。有課表可查的話，用 Slot.co_teachers 確認再展開一筆。
+    if timetable is not None:
+        for i, e in enumerate(swap_side):
+            if used[i]:
+                continue
+            found = _find_co_teach_partner(timetable, e, legs)
+            if found is None:
+                continue
+            other_teacher, other_subject = found
+            legs.append(SwapLeg(
+                klass=e["klass"],
+                teacher_a=e["teacher"], subject_a=e["subject"], slot_a=e["orig"],
+                teacher_b=other_teacher, subject_b=other_subject, slot_b=e["new"],
+            ))
+            used[i] = True
+
     unmatched = orphans + [e for i, e in enumerate(swap_side) if not used[i]]
 
     used_in = [False] * len(sub_in)
@@ -229,3 +253,30 @@ def _pair_entries(entries: list[dict]) -> tuple[list, list[dict]]:
     unmatched += [e for j, e in enumerate(sub_in) if not used_in[j]]
 
     return legs, unmatched
+
+
+def _find_co_teach_partner(timetable, e: dict, legs: list) -> tuple[str, str] | None:
+    """e 配不到對象時，找一筆已配好的 SwapLeg：若 e 的老師跟該筆某一邊互為協同老師、
+    且時段一致，回傳「另一邊」的 (老師, 科目) 供 e 再展開一筆 SwapLeg。"""
+    for leg in legs:
+        if not isinstance(leg, SwapLeg) or leg.klass != e["klass"]:
+            continue
+        if leg.slot_a == e["orig"] and leg.slot_b == e["new"]:
+            partner, other_teacher, other_subject = leg.teacher_a, leg.teacher_b, leg.subject_b
+        elif leg.slot_b == e["orig"] and leg.slot_a == e["new"]:
+            partner, other_teacher, other_subject = leg.teacher_b, leg.teacher_a, leg.subject_a
+        else:
+            continue
+        if _co_teaches(timetable, e["teacher"], partner, e["klass"]):
+            return other_teacher, other_subject
+    return None
+
+
+def _co_teaches(timetable, teacher: str, other: str, klass: str) -> bool:
+    """teacher／other 是否曾在同一班比對出協同關係（不強求跟這次異動同星期節次——
+    調課常常永久改掉原本的星期節次，比對時課表可能已經不再有那個舊時段了，
+    只要兩人在這個班有登記過協同，就採信）。"""
+    t = timetable.teachers.get(teacher)
+    if not t:
+        return False
+    return any(s.klass == klass and other in s.co_teachers for s in t.slots)

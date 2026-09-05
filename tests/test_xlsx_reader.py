@@ -5,12 +5,18 @@ import openpyxl
 import pytest
 
 from tiaoke import output, samples
-from tiaoke.models import SubLeg, SwapLeg
+from tiaoke.models import Slot, SubLeg, SwapLeg
 from tiaoke.ui.controller import AppController
 from tiaoke.xlsx_reader import ParseError, read_event, read_events
 from tiaoke.xlsx_writer import write_sheet
 
 D = datetime.date
+
+# 這台機器上的實體課表 PDF／教師配當表（若不在則跳過相關測試）
+_PDF = r"C:\Users\lolola\Desktop\1151教師課表_正式公布.pdf"
+_HAS_PDF = os.path.exists(_PDF)
+_PEIDANG = r"C:\Users\lolola\Desktop\115-1教師配當表簽稿.xlsx"
+_HAS_PEIDANG = os.path.exists(_PEIDANG)
 
 
 def _write(event, path):
@@ -127,6 +133,126 @@ def test_unmatched_swap_side_raises_parse_error(tmp_path):
 
     with pytest.raises(ParseError, match="配不出"):
         read_event(str(path))
+
+
+# ==========================================================================
+# 協同教學（P7 F4）：兩位協同老師各自登記一列跟同一位目標老師對調
+# ==========================================================================
+
+def _co_swap_event():
+    """模擬 _CoSwapForm／add_co_swap 產生的樣子：趙瑋、周蓁妍協同，一起跟張宥恩對調。"""
+    from tiaoke.models import Event, Slot
+    return Event(
+        originator="趙瑋", leave_type="病假", form_no="手動", announce_date=D(2026, 9, 1),
+        legs=[
+            SwapLeg("綜職二", "趙瑋", "基礎雜糧加工實作", Slot(D(2026, 9, 3), 5),
+                   "張宥恩", "物品整理實務", Slot(D(2026, 9, 1), 5)),
+            SwapLeg("綜職二", "周蓁妍", "基礎雜糧加工實作", Slot(D(2026, 9, 3), 5),
+                   "張宥恩", "物品整理實務", Slot(D(2026, 9, 1), 5)),
+        ],
+    )
+
+
+def _co_teach_timetable():
+    from tiaoke.timetable import Slot as TTSlot, TeacherTable, Timetable
+    table = Timetable()
+    table.teachers["趙瑋"] = TeacherTable(name="趙瑋", slots=[
+        TTSlot(4, 5, "基礎雜糧加工實作", "綜職二", co_teachers=["周蓁妍"]),
+    ])
+    table.teachers["周蓁妍"] = TeacherTable(name="周蓁妍", slots=[
+        TTSlot(4, 5, "基礎雜糧加工實作", "綜職二", co_teachers=["趙瑋"]),
+    ])
+    return table
+
+
+def _dedupe_target_row(path) -> None:
+    """`add_co_swap` 產生的檔案裡，張宥恩（目標老師）本來會有 2 列一模一樣的資料
+    （趙瑋、周蓁妍各自對調一筆都指向他）。真實的歷史檔案是人工把這種重複列
+    刪成只留一列（另一邊改用「與趙瑋/蓁妍老師調課」這種手改備註合併表示）——
+    這裡把其中一列清空，重現那個「兩邊搶同一列」的真實情境。
+
+    用清空儲存格而不是 ws.delete_rows()：openpyxl 的 delete_rows 不會妥善調整
+    其他地方的 merged_cells 範圍，會把後面分頁的合併儲存格弄亂，連帶讓 _scan
+    讀不到後面的教師單。
+    """
+    wb = openpyxl.load_workbook(path)
+    ws = wb.active
+    hits = [row[0].row for row in ws.iter_rows(min_row=1)
+           if row[0].value == "綜職二" and row[4].value == "物品整理實務"]
+    assert len(hits) == 2, f"預期張宥恩有 2 列重複資料，實際找到 {hits}"
+    for col in range(1, 10):
+        ws.cell(hits[1], col).value = None
+    wb.save(path)
+
+
+def test_co_swap_without_timetable_raises_parse_error(tmp_path):
+    """沒有課表可查協同關係時，維持原本行為：配不出來就報錯，不亂猜。"""
+    ev = _co_swap_event()
+    path = tmp_path / "x.xlsx"
+    _write(ev, str(path))
+    _dedupe_target_row(path)
+    with pytest.raises(ParseError, match="配不出"):
+        read_event(str(path))
+
+
+def test_co_swap_with_timetable_resolves_both_legs(tmp_path):
+    """有課表可查協同關係時，兩位協同老師都能各自展開一筆 SwapLeg。"""
+    ev = _co_swap_event()
+    path = tmp_path / "x.xlsx"
+    _write(ev, str(path))
+    _dedupe_target_row(path)
+
+    back = read_event(str(path), timetable=_co_teach_timetable())
+    assert len(back.legs) == 2
+    teachers_a = {leg.teacher_a for leg in back.legs}
+    assert teachers_a == {"趙瑋", "周蓁妍"}
+    for leg in back.legs:
+        assert leg.teacher_b == "張宥恩"
+        assert leg.subject_b == "物品整理實務"
+        assert leg.slot_a == Slot(D(2026, 9, 3), 5)
+        assert leg.slot_b == Slot(D(2026, 9, 1), 5)
+
+
+def test_co_swap_partial_timetable_only_resolves_the_confirmed_pair(tmp_path):
+    """課表只確認得了一邊協同關係時，另一邊依然報錯（不會因為有課表就亂展開）。"""
+    ev = _co_swap_event()
+    path = tmp_path / "x.xlsx"
+    _write(ev, str(path))
+    _dedupe_target_row(path)
+
+    from tiaoke.timetable import TeacherTable, Timetable
+    table = Timetable()
+    table.teachers["趙瑋"] = TeacherTable(name="趙瑋")  # 沒有課表資料、查不到協同
+    with pytest.raises(ParseError, match="配不出"):
+        read_event(str(path), timetable=table)
+
+
+@pytest.mark.skipif(not (_HAS_PEIDANG and _HAS_PDF), reason="找不到實體配當表或課表 PDF")
+def test_real_co_teach_file_improves_with_timetable():
+    """P6 留下的 1002-趙瑋1150903.xlsx 解析失敗案例，接上協同課表後應該大幅改善。
+
+    這份真實檔案裡趙瑋、周蓁妍協同教「基礎雜糧加工實作」（綜職二）的 3 節，
+    配當表＋課表能確認協同關係，這 3 節現在解得開了。但同一份檔案裡還有一列
+    「數學」（綜職一）也用同樣手法登記成兩人同步調課，配當表完全沒提到這堂課
+    是協同課，所以這一列依然合理地解不開——不該因為「同一份檔案裡有些協同」
+    就對其他完全沒證據的關係亂猜。
+    """
+    from tiaoke import timetable as tt_mod
+
+    path = r"C:\Users\lolola\Documents\GitHub\class-change\build_out\調代課單\1002-趙瑋1150903.xlsx"
+    if not os.path.exists(path):
+        pytest.skip("找不到真實範例檔 1002-趙瑋1150903.xlsx")
+
+    table = tt_mod.parse_pdf(_PDF)
+    rows = tt_mod.parse_co_teaching_xlsx(_PEIDANG)
+    tt_mod.apply_co_teaching(table, rows)
+
+    with pytest.raises(ParseError) as exc_info:
+        read_event(path, timetable=table)
+    msg = str(exc_info.value)
+    assert "有 1 列配不出" in msg  # 修正前是 4 列（見 P6 舊測試 test_generate_report_scans...）
+    assert "周蓁妍/綜職一/9/3(四)第1節" in msg  # 剩下這筆本來就沒有協同證據，合理解不開
+    assert "綜職二" not in msg    # 基礎雜糧加工實作那 3 列（綜職二）現在解開了
 
 
 def test_missing_banner_raises_parse_error(tmp_path):

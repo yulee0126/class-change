@@ -220,14 +220,11 @@ D＝6.2 課表校對 GUI／C＝6.1 搜尋讀回＋`xlsx_reader.py`＋6.5 產製�
       （含 Flet controls 但無真實視窗）跑過，還沒有在真正的視窗畫面上實際點過一次，
       正式使用前建議跑一次 `python main.py` 走過一輪
 
-## P7 — 協同教學（教師配當表）　🟡 進行中（2026-09-05 提出）
+## P7 — 協同教學（教師配當表）　✅ 完成（2026-09-05 提出並完成，F1→F2→F3→F4 全部做完）
 
 背景：`115-1教師配當表簽稿.xlsx` 逐老師逐課程列出授課班級／課程名稱／學分數，其中「協同」
 （含「專案協同」）欄標記兩位老師一起教同一堂課。這解開了 P6 留下的謎：`1002-趙瑋1150903.xlsx`
 解析失敗，就是因為趙瑋、周蓁妍協同教學「基礎雜糧加工實作」，兩人各自一列調課，內容幾乎一樣。
-
-規劃四階段：F1（解析配當表＋比對課表）→ F2（協作調課按鈕）→ F3（代課表單的協同獨立授課）→
-F4（讓 xlsx_reader 認得協同、修正 P6 那個解析失敗案例）。
 
 ### F1 匯入配當表、建立協同對照　✅ 完成
 - [x] `timetable.py` 新增 `Slot.co_teachers: list[str]`（這節課協同的其他老師）
@@ -278,13 +275,24 @@ F4（讓 xlsx_reader 認得協同、修正 P6 那個解析失敗案例）。
 - [x] 測試涵蓋 builder 備註文字（含「不該出現代課字樣」）、models 序列化 round-trip、
       GUI 端到端（自動偵測→自動勾選→送出→驗證 `is_co_teach`）
 
-### F4 xlsx_reader 認得協同　⬜ 待做（依賴 F1）
-- [ ] 目前 `_pair_entries` 遇到「兩個一模一樣的 swap-side entry 搶同一個對方」會直接放進
-      unmatched 報錯（`1002-趙瑋1150903.xlsx` 就是這樣）。有了協同對照表後，可以在配對失敗時
-      額外檢查：這幾個 unmatched entries 是否互為已知協同教師、且 (klass, new, orig) 完全一樣
-      →是的話视為「同一次調課的兩個化身」，允許還原成兩個 SwapLeg 而不報錯
-      - 這步驟需要 `xlsx_reader` 拿得到 `timetable`（目前 `read_event`/`read_events` 都沒收這個
-        參數，`generate_report` 呼叫時要一併傳進去）
+### F4 xlsx_reader 認得協同　✅ 完成
+- [x] `read_event`/`read_events` 新增 `timetable=None` 參數；`_pair_entries` 第一輪照舊
+      貪婪配對後，再對剩下配不到的 swap-side entry 做第二輪：找一筆已配好的 SwapLeg，
+      若 `(klass, new, orig)` 剛好對得上、且 `Slot.co_teachers` 確認 entry 的老師跟該筆
+      某一邊互為協同老師，就用「另一邊」的老師/科目再展開一筆 SwapLeg
+      - 協同確認**不要求跟這次異動同星期節次**——調課常常是永久改掉原本排課
+        （例：這次異動把星期四改成星期二，之後課表就一直是星期二），比對當下
+        課表可能已經不再有那個舊時段，只要兩人在這個班有登記過協同就採信
+      - `controller.load_event_from_file()` 與 `generate_report()` 都會把
+        `self.timetable` 傳給 `xlsx_reader`
+- [x] 真實資料驗證：`1002-趙瑋1150903.xlsx`（P6 的解析失敗案例）配上協同課表後，
+      原本 4 列配不出降到只剩 1 列——趙瑋/周蓁妍協同教的「基礎雜糧加工實作」
+      3 節現在都解得開了；剩下那 1 列是「數學／綜職一」，配當表完全沒登記這堂課
+      是協同課，所以合理地依然報錯，不會因為同一份檔案有些協同關係就對其他
+      毫無證據的列亂猜
+- [x] **使用者確認**：`xlsx_reader` 是「搜尋檔案」（`load_event_from_file`）與「產製報表」
+      （`generate_report`→`read_events`→逐分頁呼叫`read_event`）唯一共用的解析模組，
+      沒有第二套重複邏輯——兩邊都走同一個 `read_event()`，F4 這次的協同修正兩邊都受惠
 
 ---
 

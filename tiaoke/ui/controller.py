@@ -519,7 +519,7 @@ class AppController:
     def load_event_from_file(self, path: str) -> Event:
         """讀回既有通知單 Excel 供編輯；解析不了會拋 xlsx_reader.ParseError。"""
         from .. import xlsx_reader
-        ev = xlsx_reader.read_event(path)
+        ev = xlsx_reader.read_event(path, timetable=self.timetable)
         ev._source_path = path  # 動態屬性，不參與序列化，記錄「存回」時要比對的原檔
         self.project.events.append(ev)
         self.current_index = len(self.project.events) - 1
@@ -551,7 +551,7 @@ class AppController:
                 continue
             path = os.path.join(slips_folder, fn)
             try:
-                sheets = xlsx_reader.read_events(path)
+                sheets = xlsx_reader.read_events(path, timetable=self.timetable)
             except Exception as exc:  # noqa: BLE001 - 壞檔不能讓整個報表中斷
                 failed.append(f"{fn}：{exc}")
                 continue

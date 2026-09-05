@@ -471,7 +471,8 @@ class AppView:
         if kind == "coswap":
             self._leg_form = _CoSwapForm(
                 self.page, self._submit_co_swap, self._cancel_leg,
-                originator=self.ctl.current.originator, ctl=self.ctl)
+                originator=self.ctl.current.originator, ctl=self.ctl,
+                initial=initial, edit_index=edit_index)
         else:
             self._leg_form = _LegForm(
                 self.page, kind, self._submit_leg, self._cancel_leg,
@@ -502,14 +503,18 @@ class AppView:
         self._set_status(msg)
         self.refresh()
 
-    def _submit_co_swap(self, data: dict) -> None:
+    def _submit_co_swap(self, data: dict, edit_index: int | None = None) -> None:
         try:
-            self.ctl.add_co_swap(**data)
+            if edit_index is not None:
+                self.ctl.update_leg(edit_index, "coswap", **data)
+            else:
+                self.ctl.add_co_swap(**data)
         except (ValueError, KeyError) as exc:
             self._set_status(f"存不進去：{exc}")
             return
         self._leg_form = None
-        self._set_status("已加入協作調課（2 筆調課，兩位協同老師各一筆）。")
+        msg = "已更新一筆協作調課。" if edit_index is not None else "已加入一筆協作調課。"
+        self._set_status(msg)
         self.refresh()
 
     def _on_generate(self, _e) -> None:
@@ -821,7 +826,7 @@ class _LegForm(ft.Container):
             self.db = _DateField(page, "乙原本日期", ini.get("date_b") or today, width=130,
                                  on_change=self._sync)
             self.pb = _period_dd(ini.get("period_b"))
-            self.co_warn = ft.Text("", size=11, color=ft.Colors.ORANGE_800)
+            self.co_warn = ft.Text("", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_700)
             if kind == "swapsub":
                 self.stx = nf("代課老師", "")
                 body = [
@@ -931,7 +936,7 @@ class _LegForm(ft.Container):
             if others:
                 msgs.append(f"{label}老師（{teacher}）這節是協同課，與{'、'.join(others)}老師一起教")
         if msgs:
-            self.co_warn.value = "⚠ " + "；".join(msgs) + "——要一起調課的話，建議改用左上角的「協作調課」"
+            self.co_warn.value = "⚠ " + "；".join(msgs) + "——要一起調課的話，建議改用上面的「協作調課」"
 
     def _detect_co_teach(self) -> None:
         self.co_hint.value = ""
@@ -1048,64 +1053,88 @@ class _LegForm(ft.Container):
 
 
 class _CoSwapForm(ft.Container):
-    """協作調課：協同教同一堂課的甲、乙老師一起跟目標老師對調（一次產生 2 筆調課）。
+    """協作調課：A、B 兩側對調時段，任一側都可能是協同教學（多位老師一起換）。
 
-    甲老師＋日期＋節次填了、又剛好是課表比對出來的協同節次時，會自動帶出乙老師建議
-    （P7／教師配當表匯入後才有這個資訊；沒有課表或沒協同資料就得自己打乙老師）。
+    完全對稱設計——A、B side 長得一模一樣，哪一側是「協同班」、哪一側是單一
+    老師都無所謂：填主要老師＋日期＋節次後，若課表比對出這節是協同課，會自動
+    帶出「該側其他老師」建議（可編輯／清空）。這樣不管是一般調課、或是任一側
+    （甚至兩側）都是協同班的情況，用同一份表單就能處理。
     """
 
     def __init__(self, page, on_submit, on_cancel, *,
-                originator: str = "", ctl=None) -> None:
+                originator: str = "", ctl=None, initial: dict | None = None,
+                edit_index: int | None = None) -> None:
         super().__init__(bgcolor=ft.Colors.BLUE_GREY_50, padding=12, border_radius=8)
-        self.edit_index = None  # 不支援編輯，只用來跟 _LegForm 的介面一致
+        self.edit_index = edit_index
         self.ctl = ctl
         self._on_submit = on_submit
         self._on_cancel = on_cancel
         today = datetime.date.today()
         names = self._teacher_names()
+        initial = initial or {}
 
-        def nf(label, value=""):
-            return _NameField(label, value, names, 110, on_change=self._sync)
+        self.klass = ft.TextField(label="班級", width=110, dense=True,
+                                  value=initial.get("klass", ""))
 
-        self.klass = ft.TextField(label="班級", width=110, dense=True)
-        self.subject = ft.TextField(label="協同課程", width=150, dense=True)
-        self.ta = nf("甲老師（協同）", originator)
-        self.tb = nf("乙老師（協同）")
-        self.date = _DateField(page, "原本日期", today, width=130, on_change=self._sync)
-        self.period = _period_dd(None)
-        self.pick_a = ft.Column(spacing=2, tight=True)
-        self.co_hint = ft.Text("", size=11, color=ft.Colors.GREEN_700)
+        side_a = self._make_side(page, "A", names,
+                                 primary=initial.get("teachers_a", [originator])[0]
+                                 if initial.get("teachers_a") else originator,
+                                 others=initial.get("teachers_a", [])[1:],
+                                 subject=initial.get("subject_a", ""),
+                                 date=initial.get("date_a") or today,
+                                 period=initial.get("period_a"))
+        (self.ta, self.ta_others, self.subject_a, self.date_a,
+         self.period_a, self.pick_a, self.co_hint_a, block_a) = side_a
 
-        self.target_teacher = nf("目標老師")
-        self.target_subject = ft.TextField(label="目標科目", width=130, dense=True)
-        self.target_date = _DateField(page, "目標日期", today, width=130, on_change=self._sync)
-        self.target_period = _period_dd(None)
-        self.pick_target = ft.Column(spacing=2, tight=True)
+        side_b = self._make_side(page, "B", names,
+                                 primary=initial.get("teachers_b", [""])[0]
+                                 if initial.get("teachers_b") else "",
+                                 others=initial.get("teachers_b", [])[1:],
+                                 subject=initial.get("subject_b", ""),
+                                 date=initial.get("date_b") or today,
+                                 period=initial.get("period_b"))
+        (self.tb, self.tb_others, self.subject_b, self.date_b,
+         self.period_b, self.pick_b, self.co_hint_b, block_b) = side_b
 
         self.err = ft.Text("", color=ft.Colors.RED_700)
 
         self.content = ft.Column([
             ft.Text("協作調課", weight=ft.FontWeight.BOLD),
-            _hint("兩位老師協同教同一堂課，一起跟另一位老師對調。會產生 2 筆調課"
-                  "（甲跟目標老師一筆、乙跟目標老師一筆），印出來各自一張通知單。"),
-            ft.Row([self.klass, self.subject], wrap=True),
-            ft.Text("協同的兩位老師（原時段共用同一節課）", size=12, color=_HINT),
-            ft.Row([self.ta.control, self.tb.control, self.date.control, self.period],
-                  wrap=True, vertical_alignment=ft.CrossAxisAlignment.START),
-            self.pick_a,
-            self.co_hint,
-            ft.Text("要對調的目標老師（新時段）", size=12, color=_HINT),
-            ft.Row([self.target_teacher.control, self.target_subject,
-                    self.target_date.control, self.target_period],
-                  wrap=True, vertical_alignment=ft.CrossAxisAlignment.START),
-            self.pick_target,
+            _hint("A、B 兩側對調時段。哪一側有多位老師一起協同教學，"
+                  "就在「該側其他老師」填上（會自動偵測、可編輯）。"
+                  "每位老師各印一張通知單，同側老師的通知單備註會合併列出對方姓名。"),
+            self.klass,
+            ft.Text("A 側（原時段）", size=12, weight=ft.FontWeight.BOLD, color=_HINT),
+            block_a,
+            ft.Text("B 側（新時段）", size=12, weight=ft.FontWeight.BOLD, color=_HINT),
+            block_b,
             self.err,
             ft.Row([
                 ft.Button("加入", icon=ft.Icons.CHECK, on_click=self._submit),
                 ft.TextButton("取消", on_click=lambda e: self._on_cancel()),
             ]),
         ], spacing=8, tight=True)
-        self._fill_picks()
+        self._sync()
+
+    def _make_side(self, page, side: str, names: list[str], *, primary: str,
+                   others: list[str], subject: str, date: datetime.date, period):
+        ta = _NameField(f"{side}側老師", primary, names, 110, on_change=self._sync)
+        ta_others = ft.TextField(label=f"{side}側其他老師（協同、分隔）",
+                                 value="、".join(others), width=170, dense=True,
+                                 on_change=self._sync)
+        subj = ft.TextField(label="科目", width=150, dense=True, value=subject)
+        df = _DateField(page, "日期", date, width=130, on_change=self._sync)
+        pd = _period_dd(period)
+        pd.on_change = self._sync
+        pick = ft.Column(spacing=2, tight=True)
+        co_hint = ft.Text("", size=11, color=ft.Colors.GREEN_700)
+        block = ft.Column([
+            ft.Row([ta.control, ta_others, subj, df.control, pd],
+                  wrap=True, vertical_alignment=ft.CrossAxisAlignment.START),
+            pick,
+            co_hint,
+        ], spacing=2, tight=True)
+        return ta, ta_others, subj, df, pd, pick, co_hint, block
 
     def _teacher_names(self) -> list[str]:
         if self.ctl is None:
@@ -1115,16 +1144,36 @@ class _CoSwapForm(ft.Container):
         return sorted(names)
 
     def _sync(self, *_a) -> None:
-        self._fill_picks()
+        self._fill_side(self.ta, self.date_a, self.period_a, self.pick_a,
+                        self.co_hint_a, self.ta_others, self.subject_a, self.klass)
+        self._fill_side(self.tb, self.date_b, self.period_b, self.pick_b,
+                        self.co_hint_b, self.tb_others, self.subject_b, None)
         _safe_update(self)
 
-    def _fill_picks(self) -> None:
-        self.pick_a.controls = self._pick_ctrls(self.ta.value, self.date, "a")
-        self.pick_target.controls = self._pick_ctrls(self.target_teacher.value,
-                                                      self.target_date, "t")
-        self._detect_co_teacher()
+    def _fill_side(self, tf: "_NameField", datefield: "_DateField", period_dd: ft.Dropdown,
+                  pick: ft.Column, co_hint: ft.Text, others_field: ft.TextField,
+                  subject_field: ft.TextField, klass_field: ft.TextField | None) -> None:
+        pick.controls = self._pick_ctrls(tf.value, datefield, subject_field, klass_field)
+        co_hint.value = ""
+        if self.ctl is None:
+            return
+        teacher = tf.value.strip()
+        try:
+            d = datefield.get()
+        except ValueError:
+            d = None
+        period_txt = str(period_dd.value or "").strip()
+        if not (teacher and d and period_txt.isdigit()):
+            return
+        found = self.ctl.co_teachers_of(teacher, d, int(period_txt))
+        if not found:
+            return
+        if not others_field.value.strip():
+            others_field.value = "、".join(found)
+        co_hint.value = f"✓ 課表比對出這節是協同課，其他老師：{'、'.join(found)}"
 
-    def _pick_ctrls(self, teacher: str, datefield: "_DateField", side: str) -> list:
+    def _pick_ctrls(self, teacher: str, datefield: "_DateField",
+                    subject_field: ft.TextField, klass_field: ft.TextField | None) -> list:
         if self.ctl is None or not (teacher or "").strip():
             return []
         try:
@@ -1140,56 +1189,39 @@ class _CoSwapForm(ft.Container):
         row = ft.Row(wrap=True, spacing=4, run_spacing=2)
         for s in slots:
             label = f"第{s.period}節 {s.subject}" + (f"／{s.klass}" if s.klass else "")
-            if side == "a" and s.co_teachers:
+            if s.co_teachers:
                 label += "　🤝協同"
             row.controls.append(ft.OutlinedButton(
-                label, on_click=lambda e, s=s, side=side: self._apply_slot(side, s)))
+                label, on_click=lambda e, s=s: self._apply_slot(s, subject_field, klass_field)))
         return [ft.Text(f"{teacher} 星期{wd} 的課（點一下帶入）：", size=11, color=_HINT), row]
 
-    def _apply_slot(self, side: str, s) -> None:
-        if side == "a":
-            self.subject.value, self.period.value = s.subject, str(s.period)
-            if s.klass:
-                self.klass.value = s.klass
-        else:
-            self.target_subject.value, self.target_period.value = s.subject, str(s.period)
+    def _apply_slot(self, s, subject_field: ft.TextField, klass_field) -> None:
+        period_dd = self.period_a if subject_field is self.subject_a else self.period_b
+        subject_field.value, period_dd.value = s.subject, str(s.period)
+        if klass_field is not None and s.klass:
+            klass_field.value = s.klass
         self._sync()
 
-    def _detect_co_teacher(self) -> None:
-        self.co_hint.value = ""
-        if self.ctl is None:
-            return
-        teacher = self.ta.value.strip()
-        try:
-            d = self.date.get()
-        except ValueError:
-            d = None
-        period_txt = str(self.period.value or "").strip()
-        if not (teacher and d and period_txt.isdigit()):
-            return
-        others = self.ctl.co_teachers_of(teacher, d, int(period_txt))
-        if not others:
-            return
-        if not self.tb.value.strip():
-            self.tb.field.value = others[0]
-        self.co_hint.value = f"✓ 課表比對出這節是協同課，協同老師：{'、'.join(others)}"
+    @staticmethod
+    def _split_others(text: str) -> list[str]:
+        return [t for t in re.split(r"[、/／,，]", text or "") if t.strip()]
 
     def _submit(self, _e) -> None:
         try:
             data = dict(
-                klass=self.klass.value or "", subject=self.subject.value or "",
-                teacher_a=self.ta.value or "", teacher_b=self.tb.value or "",
-                date=self._req(self.date), period=self._period(self.period, "原節次"),
-                target_teacher=self.target_teacher.value or "",
-                target_subject=self.target_subject.value or "",
-                target_date=self._req(self.target_date),
-                target_period=self._period(self.target_period, "目標節次"),
+                klass=self.klass.value or "",
+                teachers_a=[self.ta.value or ""] + self._split_others(self.ta_others.value),
+                subject_a=self.subject_a.value or "",
+                date_a=self._req(self.date_a), period_a=self._period(self.period_a, "A側節次"),
+                teachers_b=[self.tb.value or ""] + self._split_others(self.tb_others.value),
+                subject_b=self.subject_b.value or "",
+                date_b=self._req(self.date_b), period_b=self._period(self.period_b, "B側節次"),
             )
         except ValueError as exc:
             self.err.value = str(exc)
             _safe_update(self.err)
             return
-        self._on_submit(data)
+        self._on_submit(data, self.edit_index)
 
     @staticmethod
     def _req(df: "_DateField") -> datetime.date:
@@ -1453,18 +1485,20 @@ class _TimetableEditor(ft.Column):
         ])
 
     def _edit_form(self, period: int, slots: list) -> ft.Control:
+        # 這個面板只有 250px 寬，欄位固定寬度＋Row並排在這裡完全擠不下、標籤還會
+        # 疊在一起，所以全部用滿版單欄堆疊，標籤盡量簡短。
         f_subj = ft.TextField(label="科目", value=slots[0].subject if slots else "",
-                              dense=True, width=150)
-        f_klass = ft.TextField(label="班級（合班用、分隔）",
+                              dense=True)
+        f_klass = ft.TextField(label="班級（合班＝多班、分隔）",
                                value="、".join(s.klass for s in slots) if slots else "",
-                               dense=True, width=190)
+                               dense=True)
         f_loc = ft.TextField(label="地點", value=slots[0].location if slots else "",
-                             dense=True, width=120)
+                             dense=True)
         f_note = ft.TextField(label="備註（如 (兼)、(輔)）",
-                              value=slots[0].note if slots else "", dense=True, width=160)
-        f_co = ft.TextField(label="協同老師（多人用、分隔，沒有留空）",
+                              value=slots[0].note if slots else "", dense=True)
+        f_co = ft.TextField(label="協同老師（多人、分隔）",
                             value="、".join(slots[0].co_teachers) if slots else "",
-                            dense=True, width=220)
+                            dense=True)
         actions = [
             ft.Button("儲存", icon=ft.Icons.SAVE,
                       on_click=lambda e: self._save_slot(period, f_subj, f_klass, f_loc,
@@ -1477,11 +1511,9 @@ class _TimetableEditor(ft.Column):
         return ft.Container(
             padding=8, bgcolor=ft.Colors.BLUE_GREY_50, border_radius=6,
             content=ft.Column([
-                ft.Row([f_subj, f_klass], wrap=True),
-                ft.Row([f_loc, f_note], wrap=True),
-                ft.Row([f_co], wrap=True),
+                f_subj, f_klass, f_loc, f_note, f_co,
                 ft.Row(actions, wrap=True),
-            ], spacing=4, tight=True),
+            ], spacing=8, tight=True),
         )
 
     # ---- 事件 ----------------------------------------------------

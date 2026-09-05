@@ -3,7 +3,7 @@ import datetime
 import pytest
 
 from tiaoke import roc
-from tiaoke.models import Project, Slot
+from tiaoke.models import CoSwapLeg, Project, Slot
 from tiaoke.ui.controller import AppController
 
 D = datetime.date
@@ -62,38 +62,52 @@ def test_co_teachers_of_looks_up_timetable():
     assert AppController().co_teachers_of("趙瑋", D(2026, 9, 1), 5) == []  # 沒課表
 
 
-def test_add_co_swap_creates_two_independent_swap_legs():
+def test_add_co_swap_creates_one_symmetric_leg():
     c = AppController()
     c.new_event()
     c.update_event_fields(originator="趙瑋", form_no="手動")
-    n = c.add_co_swap(
-        klass="綜職二", subject="基礎雜糧加工實作",
-        teacher_a="趙瑋", teacher_b="周蓁妍",
-        date=D(2026, 9, 3), period=5,
-        target_teacher="張宥恩", target_subject="物品整理實務",
-        target_date=D(2026, 9, 1), target_period=5,
+    c.add_co_swap(
+        klass="綜職二",
+        teachers_a=["趙瑋", "周蓁妍"], subject_a="基礎雜糧加工實作",
+        date_a=D(2026, 9, 3), period_a=5,
+        teachers_b=["張宥恩"], subject_b="物品整理實務",
+        date_b=D(2026, 9, 1), period_b=5,
     )
-    assert n == 2
     legs = c.current.legs
-    assert len(legs) == 2
-    assert {legs[0].teacher_a, legs[1].teacher_a} == {"趙瑋", "周蓁妍"}
-    assert legs[0].teacher_b == legs[1].teacher_b == "張宥恩"
-    assert legs[0].slot_a == legs[1].slot_a == Slot(D(2026, 9, 3), 5)
-    assert legs[0].slot_b == legs[1].slot_b == Slot(D(2026, 9, 1), 5)
-    # 主檔學到協同雙方的名字
+    assert len(legs) == 1
+    leg = legs[0]
+    assert isinstance(leg, CoSwapLeg)
+    assert leg.teachers_a == ["趙瑋", "周蓁妍"]
+    assert leg.teachers_b == ["張宥恩"]
+    assert leg.slot_a == Slot(D(2026, 9, 3), 5)
+    assert leg.slot_b == Slot(D(2026, 9, 1), 5)
+    # 主檔學到雙側的名字
     assert "周蓁妍" in c.project.teachers and "張宥恩" in c.project.teachers
 
 
-def test_add_co_swap_requires_second_teacher():
+def test_add_co_swap_requires_both_sides():
     c = AppController()
     c.new_event()
-    with pytest.raises(ValueError, match="協同的另一位"):
+    with pytest.raises(ValueError, match="B 側"):
         c.add_co_swap(
-            klass="綜職二", subject="基礎雜糧加工實作",
-            teacher_a="趙瑋", teacher_b="",
-            date=D(2026, 9, 3), period=5,
-            target_teacher="張宥恩", target_subject="物品整理實務",
-            target_date=D(2026, 9, 1), target_period=5,
+            klass="綜職二",
+            teachers_a=["趙瑋", "周蓁妍"], subject_a="基礎雜糧加工實作",
+            date_a=D(2026, 9, 3), period_a=5,
+            teachers_b=[], subject_b="物品整理實務",
+            date_b=D(2026, 9, 1), period_b=5,
+        )
+
+
+def test_add_co_swap_rejects_overlapping_teachers():
+    c = AppController()
+    c.new_event()
+    with pytest.raises(ValueError, match="不能有相同老師"):
+        c.add_co_swap(
+            klass="綜職二",
+            teachers_a=["趙瑋"], subject_a="基礎雜糧加工實作",
+            date_a=D(2026, 9, 3), period_a=5,
+            teachers_b=["趙瑋"], subject_b="物品整理實務",
+            date_b=D(2026, 9, 1), period_b=5,
         )
 
 

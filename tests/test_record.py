@@ -5,7 +5,7 @@ import openpyxl
 
 from tiaoke import record, samples
 from tiaoke import timetable as tt_mod
-from tiaoke.models import Event, Slot, SubLeg, SwapLeg
+from tiaoke.models import CoSwapLeg, Event, Slot, SubLeg, SwapLeg
 from tiaoke.ui.controller import AppController
 
 D = datetime.date
@@ -74,6 +74,27 @@ def test_swap_leg_makes_two_rows():
     assert rows[0][13] == "曹朱榜" and rows[0][10] == "彈性學習"
     # 乙(張詠竣)換到 11/3 第3節 上 電子學
     assert rows[1][6] == D(2021, 11, 3) and rows[1][13] == "張詠竣"
+
+
+def test_co_swap_leg_makes_one_row_per_teacher():
+    ev = Event("趙瑋", "病假", "手動", D(2026, 9, 1), legs=[
+        CoSwapLeg("綜職二", ["趙瑋", "周蓁妍"], "基礎雜糧加工實作", Slot(D(2026, 9, 3), 5),
+                 ["張宥恩"], "物品整理實務", Slot(D(2026, 9, 1), 5)),
+    ])
+    rows = record.event_to_rows(ev, ts="x")
+    assert [r[5] for r in rows] == ["調課", "調課", "調課"]  # 2(A側) + 1(B側)
+
+    by_actual = {r[13]: r for r in rows}
+    assert set(by_actual) == {"趙瑋", "周蓁妍", "張宥恩"}
+    # 趙瑋、周蓁妍都換到 9/1 第5節上 基礎雜糧加工實作，原教師都是張宥恩
+    for name in ("趙瑋", "周蓁妍"):
+        r = by_actual[name]
+        assert r[6] == D(2026, 9, 1) and r[8] == 5
+        assert r[10] == "基礎雜糧加工實作" and r[11] == "張宥恩"
+    # 張宥恩換到 9/3 第5節上 物品整理實務，原教師欄合併兩人姓名
+    r = by_actual["張宥恩"]
+    assert r[6] == D(2026, 9, 3) and r[8] == 5
+    assert r[10] == "物品整理實務" and r[11] == "趙瑋、周蓁妍"
 
 
 def test_update_record_file_and_stats(tmp_path):

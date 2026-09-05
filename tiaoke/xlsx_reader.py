@@ -7,18 +7,20 @@
 （`說明:\n...` 那一列），單列的備註文字則整個略過不讀。
 
 還原邏輯（只看教師調代課通知單，班級單是衍生資料，略過不讀）：
-  · 一列「調課後時間、原時間都有值」＝對調腳的一邊
+  · 一列「調課後時間、原時間都有值」＝對調事件的一邊
   · 一列「只有原時間」＝代課腳的「被代課」那邊
   · 一列「只有新時間」＝代課腳的「代課」那邊
-  · 兩個對調腳一邊 (klass, new, orig) 與 (klass, orig, new) 互相對應 → 配成一個 SwapLeg
+  · 同一 (班級, {new,orig}) 這兩個時段是同一次調課事件——依 (new,orig) 的方向
+    分成 A、B 兩側，每側各自的人數才是重點：
+      - 兩側都恰好 1 人 → 一般 SwapLeg
+      - 任一側 2 人以上 → 協同教學（P7）：那幾位老師各自登記一列一模一樣的資料
+        （同 klass/new/orig，只差老師名字），對方教師單卻只有一列。若呼叫端有
+        給 `timetable`（已跑過教師配當表比對）且能用 `Slot.co_teachers` 確認
+        「多人那側彼此互為協同老師」，就整組合併成一個 CoSwapLeg；驗不到協同
+        關係就不合併，整組列為 unmatched
   · 一個「被代課」與一個「代課」在同一 (klass, slot) → 配成一個 SubLeg
     （from_swap 由儲存格底色是否反白決定，不是文字）
-  · 協同教學（見 P7）：兩位協同老師一起跟同一位目標老師對調時，會各自登記一列
-    幾乎一樣的資料（同 klass/new/orig，只差老師名字），導致其中一邊配不到對象
-    （對方教師單只有一列）。若呼叫端有給 `timetable`（已跑過教師配當表比對），
-    會用 `Slot.co_teachers` 確認「這兩位是不是協同老師」，是的話就用同一個目標
-    老師/科目再展開一筆 SwapLeg，而不是直接判定解析失敗。
-如果還是配不出（例如同一節被兩位老師同時頂替、且查不到協同關係之類，超出目前
+如果配不出（例如同一節被兩位老師同時頂替、且查不到協同關係之類，超出目前
 資料模型能表示的範圍），視為整份解析失敗並丟出 ParseError，不回傳猜測、可能
 錯誤的資料。
 """
@@ -32,7 +34,7 @@ import re
 from openpyxl import load_workbook
 
 from . import roc
-from .models import Event, Slot, SubLeg, SwapLeg
+from .models import CoSwapLeg, Event, Slot, SubLeg, SwapLeg
 from .styles import CLASS_TITLE_TEXT
 
 _BANNER_RE = re.compile(r"假單編號：(?P<form_no>.+?)  (?P<originator>.+) (?P<leave_type>\S+)$")
@@ -195,42 +197,40 @@ def _pair_entries(entries: list[dict], timetable=None) -> tuple[list, list[dict]
     orphans = [e for e in entries if not e["new"] and not e["orig"]]  # 兩邊都空，異常
 
     legs: list = []
+    unmatched: list[dict] = list(orphans)
 
-    used = [False] * len(swap_side)
-    for i, e1 in enumerate(swap_side):
-        if used[i]:
-            continue
-        for j in range(i + 1, len(swap_side)):
-            if used[j]:
-                continue
-            e2 = swap_side[j]
-            if e1["klass"] == e2["klass"] and e1["new"] == e2["orig"] and e1["orig"] == e2["new"]:
-                legs.append(SwapLeg(
-                    klass=e1["klass"],
-                    teacher_a=e1["teacher"], subject_a=e1["subject"], slot_a=e1["orig"],
-                    teacher_b=e2["teacher"], subject_b=e2["subject"], slot_b=e2["orig"],
-                ))
-                used[i] = used[j] = True
-                break
+    # 同一 (班級, {new,orig}) 這兩個時段就是同一次調課事件；一側只有一人＝一般
+    # SwapLeg，任一側多人就是協同教學（P7）——這種情況下協同的那幾位老師各自
+    # 登記一列一模一樣的資料（同 klass/new/orig，只差老師名字），對方教師單卻
+    # 只有一列，所以「側」要用整組人數判斷，不是逐列貪婪配對。
+    groups: dict[tuple, list[dict]] = {}
+    for e in swap_side:
+        key = (e["klass"], frozenset([e["new"], e["orig"]]))
+        groups.setdefault(key, []).append(e)
 
-    # 協同教學：兩位協同老師各自登記一列跟同一位目標老師對調，其中一邊配不到對象
-    # （對方教師單只有一列）。有課表可查的話，用 Slot.co_teachers 確認再展開一筆。
-    if timetable is not None:
-        for i, e in enumerate(swap_side):
-            if used[i]:
-                continue
-            found = _find_co_teach_partner(timetable, e, legs)
-            if found is None:
-                continue
-            other_teacher, other_subject = found
+    for (klass, _pair), group in groups.items():
+        x, y = group[0]["new"], group[0]["orig"]
+        side_a = [e for e in group if e["new"] == x and e["orig"] == y]
+        side_b = [e for e in group if e["new"] == y and e["orig"] == x]
+
+        if len(side_a) == 1 and len(side_b) == 1:
+            ea, eb = side_a[0], side_b[0]
             legs.append(SwapLeg(
-                klass=e["klass"],
-                teacher_a=e["teacher"], subject_a=e["subject"], slot_a=e["orig"],
-                teacher_b=other_teacher, subject_b=other_subject, slot_b=e["new"],
+                klass=klass,
+                teacher_a=ea["teacher"], subject_a=ea["subject"], slot_a=ea["orig"],
+                teacher_b=eb["teacher"], subject_b=eb["subject"], slot_b=eb["orig"],
             ))
-            used[i] = True
-
-    unmatched = orphans + [e for i, e in enumerate(swap_side) if not used[i]]
+        elif side_a and side_b and _all_mutual_co_teachers(timetable, klass, side_a) \
+                and _all_mutual_co_teachers(timetable, klass, side_b):
+            legs.append(CoSwapLeg(
+                klass=klass,
+                teachers_a=[e["teacher"] for e in side_a], subject_a=side_a[0]["subject"],
+                slot_a=side_a[0]["orig"],
+                teachers_b=[e["teacher"] for e in side_b], subject_b=side_b[0]["subject"],
+                slot_b=side_b[0]["orig"],
+            ))
+        else:
+            unmatched.extend(group)
 
     used_in = [False] * len(sub_in)
     for e_out in sub_out:
@@ -255,21 +255,20 @@ def _pair_entries(entries: list[dict], timetable=None) -> tuple[list, list[dict]
     return legs, unmatched
 
 
-def _find_co_teach_partner(timetable, e: dict, legs: list) -> tuple[str, str] | None:
-    """e 配不到對象時，找一筆已配好的 SwapLeg：若 e 的老師跟該筆某一邊互為協同老師、
-    且時段一致，回傳「另一邊」的 (老師, 科目) 供 e 再展開一筆 SwapLeg。"""
-    for leg in legs:
-        if not isinstance(leg, SwapLeg) or leg.klass != e["klass"]:
-            continue
-        if leg.slot_a == e["orig"] and leg.slot_b == e["new"]:
-            partner, other_teacher, other_subject = leg.teacher_a, leg.teacher_b, leg.subject_b
-        elif leg.slot_b == e["orig"] and leg.slot_a == e["new"]:
-            partner, other_teacher, other_subject = leg.teacher_b, leg.teacher_a, leg.subject_a
-        else:
-            continue
-        if _co_teaches(timetable, e["teacher"], partner, e["klass"]):
-            return other_teacher, other_subject
-    return None
+def _all_mutual_co_teachers(timetable, klass: str, side_entries: list[dict]) -> bool:
+    """side_entries 只有 1 人：不用驗證，直接算數（一般情況）。
+    2 人以上：要求彼此兩兩都能在課表／配當表比對中確認互為協同老師，才允許
+    合併成一個 CoSwapLeg——只要有一對驗不到，就不亂猜，交給呼叫端當unmatched。"""
+    if len(side_entries) < 2:
+        return True
+    if timetable is None:
+        return False
+    names = [e["teacher"] for e in side_entries]
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if not (_co_teaches(timetable, a, b, klass) or _co_teaches(timetable, b, a, klass)):
+                return False
+    return True
 
 
 def _co_teaches(timetable, teacher: str, other: str, klass: str) -> bool:

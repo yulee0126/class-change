@@ -78,7 +78,43 @@ class SubLeg:
         return [self.orig_teacher, self.sub_teacher]
 
 
-Leg = Union[SwapLeg, SubLeg]
+@dataclass
+class CoSwapLeg:
+    """協作調課腳：A、B 兩側同一堂課互換時段，任一側都可能是協同教學（多位老師）。
+
+    跟 SwapLeg 的差別：SwapLeg 嚴格是「兩人一組」；CoSwapLeg 的 teachers_a／
+    teachers_b 各自是一個名單，可以是 1 人（一般情況）或多人（協同教學）。
+    A 側全部老師共用同一個 subject_a／slot_a（協同＝同一堂課），B 側同理。
+
+    印出來的規則（對照真實案例 1002-趙瑋1150903.xlsx）：
+    - A 側每位老師各自在自己的教師單上有一列，備註「與{B側老師，多人用/相接}老師調課」
+    - B 側每位老師各自在自己的教師單上有一列，備註「與{A側老師，多人用/相接}老師調課」
+    - 班級單：一節課只有一列，不會因為某側協同人數變多而重複；備註的老師名字用
+      「/」相接多人姓名
+    """
+
+    klass: str
+    teachers_a: list[str]
+    subject_a: str
+    slot_a: Slot
+    teachers_b: list[str]
+    subject_b: str
+    slot_b: Slot
+
+    kind: str = field(default="coswap", init=False)
+
+    def dates(self) -> list[datetime.date]:
+        return [self.slot_a.date, self.slot_b.date]
+
+    def teachers(self) -> list[str]:
+        seen: list[str] = []
+        for t in self.teachers_a + self.teachers_b:
+            if t not in seen:
+                seen.append(t)
+        return seen
+
+
+Leg = Union[SwapLeg, SubLeg, CoSwapLeg]
 
 
 @dataclass
@@ -179,6 +215,15 @@ def leg_to_dict(leg: Leg) -> dict:
             "teacher_a": leg.teacher_a, "subject_a": leg.subject_a, "slot_a": _slot_to_dict(leg.slot_a),
             "teacher_b": leg.teacher_b, "subject_b": leg.subject_b, "slot_b": _slot_to_dict(leg.slot_b),
         }
+    if isinstance(leg, CoSwapLeg):
+        return {
+            "kind": "coswap",
+            "klass": leg.klass,
+            "teachers_a": list(leg.teachers_a), "subject_a": leg.subject_a,
+            "slot_a": _slot_to_dict(leg.slot_a),
+            "teachers_b": list(leg.teachers_b), "subject_b": leg.subject_b,
+            "slot_b": _slot_to_dict(leg.slot_b),
+        }
     return {
         "kind": "sub",
         "klass": leg.klass,
@@ -197,6 +242,14 @@ def leg_from_dict(d: dict) -> Leg:
             klass=d["klass"],
             teacher_a=d["teacher_a"], subject_a=d["subject_a"], slot_a=_slot_from_dict(d["slot_a"]),
             teacher_b=d["teacher_b"], subject_b=d["subject_b"], slot_b=_slot_from_dict(d["slot_b"]),
+        )
+    if d["kind"] == "coswap":
+        return CoSwapLeg(
+            klass=d["klass"],
+            teachers_a=list(d["teachers_a"]), subject_a=d["subject_a"],
+            slot_a=_slot_from_dict(d["slot_a"]),
+            teachers_b=list(d["teachers_b"]), subject_b=d["subject_b"],
+            slot_b=_slot_from_dict(d["slot_b"]),
         )
     return SubLeg(
         klass=d["klass"],

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .models import Event, Slot, SubLeg, SwapLeg, MIN_PERIOD, MAX_PERIOD
+from .models import CoSwapLeg, Event, Slot, SubLeg, SwapLeg, MIN_PERIOD, MAX_PERIOD
 
 
 # --------------------------------------------------------------------------
@@ -90,6 +90,27 @@ def build(event: Event, timetable=None) -> list[Slip]:
                 note=f"調課(原{_bare(leg.teacher_b)}老師/{leg.subject_b})",
             ))
             # class rows above are 調課 → is_sub 預設 False
+        elif isinstance(leg, CoSwapLeg):
+            a_label = "/".join(_bare(t) for t in leg.teachers_a)
+            b_label = "/".join(_bare(t) for t in leg.teachers_b)
+            for t in leg.teachers_a:
+                tr(t).append(TeacherRow(
+                    klass=leg.klass, new=leg.slot_b, subject=leg.subject_a, orig=leg.slot_a,
+                    note=f"與{b_label}老師 {leg.subject_b} 調課",
+                ))
+            for t in leg.teachers_b:
+                tr(t).append(TeacherRow(
+                    klass=leg.klass, new=leg.slot_a, subject=leg.subject_b, orig=leg.slot_b,
+                    note=f"與{a_label}老師 {leg.subject_a} 調課",
+                ))
+            cr(leg.klass).append(ClassRow(
+                slot=leg.slot_a, subject=leg.subject_b,
+                note=f"調課(原{a_label}老師/{leg.subject_a})",
+            ))
+            cr(leg.klass).append(ClassRow(
+                slot=leg.slot_b, subject=leg.subject_a,
+                note=f"調課(原{b_label}老師/{leg.subject_b})",
+            ))
         elif isinstance(leg, SubLeg):
             hl = leg.from_swap
             mark = _lookup_mark(timetable, leg.orig_teacher, leg.slot)
@@ -203,6 +224,23 @@ def validate(event: Event) -> list[str]:
                 msgs.append(f"{tag}：甲、乙為同一位老師。")
             key = ("swap", leg.klass, leg.teacher_a, leg.teacher_b,
                    leg.slot_a, leg.slot_b)
+        elif isinstance(leg, CoSwapLeg):
+            if not leg.klass.strip():
+                msgs.append(f"{tag}：班級未填。")
+            for label, names, subj in (("A", leg.teachers_a, leg.subject_a),
+                                       ("B", leg.teachers_b, leg.subject_b)):
+                if not names or all(not n.strip() for n in names):
+                    msgs.append(f"{tag}：{label}側老師未填。")
+                if not subj.strip():
+                    msgs.append(f"{tag}：{label}側科目未填。")
+            _check_period(msgs, tag, "A側", leg.slot_a.period)
+            _check_period(msgs, tag, "B側", leg.slot_b.period)
+            if leg.slot_a == leg.slot_b:
+                msgs.append(f"{tag}：A、B側時段相同，無法對調。")
+            if {_bare(t) for t in leg.teachers_a} & {_bare(t) for t in leg.teachers_b}:
+                msgs.append(f"{tag}：A、B側有相同老師。")
+            key = ("coswap", leg.klass, tuple(sorted(leg.teachers_a)),
+                   tuple(sorted(leg.teachers_b)), leg.slot_a, leg.slot_b)
         else:
             if not leg.klass.strip():
                 msgs.append(f"{tag}：班級未填。")

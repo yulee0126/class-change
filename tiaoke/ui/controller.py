@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 
 from .. import models, note_draft, output, record, storage
 from ..builder import ClassSlip, TeacherSlip, build, validate
-from ..models import (CLASS_SLIP_STYLES, LEAVE_TYPES, Event, Project, Slot,
-                      SubLeg, SwapLeg)
+from ..models import (CLASS_SLIP_STYLES, LEAVE_TYPES, CoSwapLeg, Event, Project,
+                      Slot, SubLeg, SwapLeg)
 
 DEFAULT_FORM_NO = "手動+"
 
@@ -346,26 +346,39 @@ class AppController:
                 return list(s.co_teachers)
         return []
 
-    def add_co_swap(self, *, klass, subject, teacher_a, teacher_b, date, period,
-                    target_teacher, target_subject, target_date, target_period) -> int:
-        """協作調課：協同教同一堂課的甲、乙老師，一起跟同一位目標老師對調。
+    @staticmethod
+    def _build_co_swap(klass: str, teachers_a: list[str], subject_a: str,
+                       date_a: datetime.date, period_a: int,
+                       teachers_b: list[str], subject_b: str,
+                       date_b: datetime.date, period_b: int) -> CoSwapLeg:
+        teachers_a = [t.strip() for t in teachers_a if t.strip()]
+        teachers_b = [t.strip() for t in teachers_b if t.strip()]
+        if not teachers_a:
+            raise ValueError("請填 A 側老師。")
+        if not teachers_b:
+            raise ValueError("請填 B 側老師。")
+        if set(teachers_a) & set(teachers_b):
+            raise ValueError("A、B 側不能有相同老師。")
+        return CoSwapLeg(
+            klass=klass.strip(),
+            teachers_a=teachers_a, subject_a=subject_a.strip(),
+            slot_a=Slot(date_a, int(period_a)),
+            teachers_b=teachers_b, subject_b=subject_b.strip(),
+            slot_b=Slot(date_b, int(period_b)),
+        )
 
-        產生 2 筆獨立的 SwapLeg（甲↔目標一筆、乙↔目標一筆），各自的教師單／班級單
-        各自列一列——不改資料模型去支援「多人一組」，印出來就是兩張內容相近的通知單
-        （對照真實案例：兩位協同老師原本就是這樣各自登記的）。回傳新增的腳數（固定 2）。
+    def add_co_swap(self, **kw) -> None:
+        """協作調課：A、B 兩側同一堂課互換時段，任一側都可能是協同教學（多位老師）。
+
+        全對稱設計：哪一側是「協同班」、哪一側是單一老師都無所謂，兩側都可以放
+        1 位或多位老師，同一份資料涵蓋一般情況跟兩側都協同的情況。產生一個
+        CoSwapLeg（不是拆成好幾個獨立 SwapLeg）——教師單／班級單才會正確合併、
+        不會重複（對照真實案例 1002-趙瑋1150903.xlsx）。
         """
-        if not teacher_b.strip():
-            raise ValueError("請填協同的另一位老師。")
-        leg_a = self._build_swap(klass, teacher_a, subject, date, period,
-                                 target_teacher, target_subject, target_date, target_period)
-        leg_b = self._build_swap(klass, teacher_b, subject, date, period,
-                                 target_teacher, target_subject, target_date, target_period)
-        ev = self._require_event()
-        ev.legs.append(leg_a)
-        ev.legs.append(leg_b)
-        self._learn_names(leg_a.klass, [teacher_a, teacher_b, target_teacher],
-                          [subject, target_subject])
-        return 2
+        leg = self._build_co_swap(**kw)
+        self._require_event().legs.append(leg)
+        self._learn_names(leg.klass, leg.teachers_a + leg.teachers_b,
+                          [leg.subject_a, leg.subject_b])
 
     def add_swap_leg(self, **kw) -> None:
         leg = self._build_swap(**kw)
@@ -396,10 +409,18 @@ class AppController:
         ev = self.current
         if not ev or not (0 <= index < len(ev.legs)):
             return
-        leg = self._build_swap(**kw) if kind == "swap" else self._build_sub(**kw)
+        if kind == "swap":
+            leg = self._build_swap(**kw)
+        elif kind == "coswap":
+            leg = self._build_co_swap(**kw)
+        else:
+            leg = self._build_sub(**kw)
         ev.legs[index] = leg
         if kind == "swap":
             self._learn_names(leg.klass, [leg.teacher_a, leg.teacher_b],
+                              [leg.subject_a, leg.subject_b])
+        elif kind == "coswap":
+            self._learn_names(leg.klass, leg.teachers_a + leg.teachers_b,
                               [leg.subject_a, leg.subject_b])
         else:
             self._learn_names(leg.klass, [leg.orig_teacher, leg.sub_teacher], [leg.subject])
@@ -421,6 +442,14 @@ class AppController:
                 teacher_a=leg.teacher_a, subject_a=leg.subject_a,
                 date_a=leg.slot_a.date, period_a=leg.slot_a.period,
                 teacher_b=leg.teacher_b, subject_b=leg.subject_b,
+                date_b=leg.slot_b.date, period_b=leg.slot_b.period,
+            )
+        if isinstance(leg, CoSwapLeg):
+            return dict(
+                kind="coswap", klass=leg.klass,
+                teachers_a=list(leg.teachers_a), subject_a=leg.subject_a,
+                date_a=leg.slot_a.date, period_a=leg.slot_a.period,
+                teachers_b=list(leg.teachers_b), subject_b=leg.subject_b,
                 date_b=leg.slot_b.date, period_b=leg.slot_b.period,
             )
         return dict(
@@ -456,6 +485,12 @@ class AppController:
                     f"調課　{leg.klass or '？班'}｜"
                     f"{ts(leg.teacher_a, leg.subject_a)} {leg.slot_a} "
                     f"↔ {ts(leg.teacher_b, leg.subject_b)} {leg.slot_b}"
+                )
+            elif isinstance(leg, CoSwapLeg):
+                a_txt = ts("、".join(leg.teachers_a) or "？", leg.subject_a)
+                b_txt = ts("、".join(leg.teachers_b) or "？", leg.subject_b)
+                out.append(
+                    f"協作調課　{leg.klass or '？班'}｜{a_txt} {leg.slot_a} ↔ {b_txt} {leg.slot_b}"
                 )
             else:
                 out.append(

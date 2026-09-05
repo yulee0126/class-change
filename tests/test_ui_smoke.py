@@ -10,6 +10,7 @@ import pytest
 ft = pytest.importorskip("flet")
 
 from tiaoke import samples
+from tiaoke.models import CoSwapLeg
 from tiaoke.timetable import Slot, TeacherTable, Timetable
 from tiaoke.ui.app import AppView, _SlipSearch, _TimetableEditor, _TimetableImport, main  # noqa: E402
 from tiaoke.ui.controller import AppController  # noqa: E402
@@ -246,24 +247,27 @@ def test_co_swap_form_end_to_end():
 
     # 2026-09-03 是星期四
     form.ta.field.value = "趙瑋"
-    form.date.field.value = "2026-09-03"
-    form.period.value = "5"
+    form.date_a.field.value = "2026-09-03"
+    form.period_a.value = "5"
     form._sync()
-    assert form.tb.value == "周蓁妍"          # 自動帶出協同老師
-    assert "協同" in form.co_hint.value
+    assert form.ta_others.value == "周蓁妍"    # 自動帶出協同老師
+    assert "協同" in form.co_hint_a.value
 
     form.klass.value = "綜職二"
-    form.subject.value = "基礎雜糧加工實作"
-    form.target_teacher.field.value = "張宥恩"
-    form.target_subject.value = "物品整理實務"
-    form.target_date.field.value = "2026-09-01"
-    form.target_period.value = "5"
+    form.subject_a.value = "基礎雜糧加工實作"
+    form.tb.field.value = "張宥恩"
+    form.subject_b.value = "物品整理實務"
+    form.date_b.field.value = "2026-09-01"
+    form.period_b.value = "5"
     form._submit(None)
 
     assert view._leg_form is None
     legs = view.ctl.current.legs
-    assert len(legs) == 2
-    assert {legs[0].teacher_a, legs[1].teacher_a} == {"趙瑋", "周蓁妍"}
+    assert len(legs) == 1
+    leg = legs[0]
+    assert isinstance(leg, CoSwapLeg)
+    assert leg.teachers_a == ["趙瑋", "周蓁妍"]
+    assert leg.teachers_b == ["張宥恩"]
     assert "協作調課" in view.status.value
 
 

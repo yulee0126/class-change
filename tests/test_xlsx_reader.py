@@ -5,7 +5,7 @@ import openpyxl
 import pytest
 
 from tiaoke import output, samples
-from tiaoke.models import Slot, SubLeg, SwapLeg
+from tiaoke.models import CoSwapLeg, Slot, SubLeg, SwapLeg
 from tiaoke.ui.controller import AppController
 from tiaoke.xlsx_reader import ParseError, read_event, read_events
 from tiaoke.xlsx_writer import write_sheet
@@ -195,26 +195,27 @@ def test_co_swap_without_timetable_raises_parse_error(tmp_path):
         read_event(str(path))
 
 
-def test_co_swap_with_timetable_resolves_both_legs(tmp_path):
-    """有課表可查協同關係時，兩位協同老師都能各自展開一筆 SwapLeg。"""
+def test_co_swap_with_timetable_resolves_to_one_co_swap_leg(tmp_path):
+    """有課表可查協同關係時，兩位協同老師合併還原成一個 CoSwapLeg（不是兩個 SwapLeg）。"""
     ev = _co_swap_event()
     path = tmp_path / "x.xlsx"
     _write(ev, str(path))
     _dedupe_target_row(path)
 
     back = read_event(str(path), timetable=_co_teach_timetable())
-    assert len(back.legs) == 2
-    teachers_a = {leg.teacher_a for leg in back.legs}
-    assert teachers_a == {"趙瑋", "周蓁妍"}
-    for leg in back.legs:
-        assert leg.teacher_b == "張宥恩"
-        assert leg.subject_b == "物品整理實務"
-        assert leg.slot_a == Slot(D(2026, 9, 3), 5)
-        assert leg.slot_b == Slot(D(2026, 9, 1), 5)
+    assert len(back.legs) == 1
+    leg = back.legs[0]
+    assert isinstance(leg, CoSwapLeg)
+    assert set(leg.teachers_a) == {"趙瑋", "周蓁妍"}
+    assert leg.teachers_b == ["張宥恩"]
+    assert leg.subject_a == "基礎雜糧加工實作"
+    assert leg.subject_b == "物品整理實務"
+    assert leg.slot_a == Slot(D(2026, 9, 3), 5)
+    assert leg.slot_b == Slot(D(2026, 9, 1), 5)
 
 
-def test_co_swap_partial_timetable_only_resolves_the_confirmed_pair(tmp_path):
-    """課表只確認得了一邊協同關係時，另一邊依然報錯（不會因為有課表就亂展開）。"""
+def test_co_swap_unconfirmed_co_teach_stays_unmatched(tmp_path):
+    """給了課表但驗不到協同關係時，整組（含目標老師那列）都算配不出，不會亂猜。"""
     ev = _co_swap_event()
     path = tmp_path / "x.xlsx"
     _write(ev, str(path))
@@ -229,13 +230,17 @@ def test_co_swap_partial_timetable_only_resolves_the_confirmed_pair(tmp_path):
 
 @pytest.mark.skipif(not (_HAS_PEIDANG and _HAS_PDF), reason="找不到實體配當表或課表 PDF")
 def test_real_co_teach_file_improves_with_timetable():
-    """P6 留下的 1002-趙瑋1150903.xlsx 解析失敗案例，接上協同課表後應該大幅改善。
+    """P6 留下的 1002-趙瑋1150903.xlsx 解析失敗案例，接上協同課表後應該改善（但不會全解開）。
 
     這份真實檔案裡趙瑋、周蓁妍協同教「基礎雜糧加工實作」（綜職二）的 3 節，
-    配當表＋課表能確認協同關係，這 3 節現在解得開了。但同一份檔案裡還有一列
-    「數學」（綜職一）也用同樣手法登記成兩人同步調課，配當表完全沒提到這堂課
-    是協同課，所以這一列依然合理地解不開——不該因為「同一份檔案裡有些協同」
-    就對其他完全沒證據的關係亂猜。
+    配當表＋課表能確認協同關係，這 3 節現在正確合併成 3 個 CoSwapLeg 解開了。
+
+    同一份檔案裡還有「數學」（綜職一）：趙瑋、周蓁妍、林冠佑三人也用同樣的
+    手法各登記一列同步調課，但配當表完全沒提到這堂課是協同課，驗不到協同關係。
+    這裡刻意不採用「先到先配、按貪婪順序把林冠佑配給趙瑋」這種舊做法——那樣
+    等於隨機武斷地認定趙瑋才是真正跟林冠佑對調的人、悄悄丟掉周蓁妍那筆同樣
+    的宣告，是更嚴重的錯誤。改成分組比對後，這 3 列（趙瑋、周蓁妍、林冠佑）
+    會一起被列為配不出，而不是靜悄悄地猜一個可能是錯的答案。
     """
     from tiaoke import timetable as tt_mod
 
@@ -250,9 +255,44 @@ def test_real_co_teach_file_improves_with_timetable():
     with pytest.raises(ParseError) as exc_info:
         read_event(path, timetable=table)
     msg = str(exc_info.value)
-    assert "有 1 列配不出" in msg  # 修正前是 4 列（見 P6 舊測試 test_generate_report_scans...）
-    assert "周蓁妍/綜職一/9/3(四)第1節" in msg  # 剩下這筆本來就沒有協同證據，合理解不開
-    assert "綜職二" not in msg    # 基礎雜糧加工實作那 3 列（綜職二）現在解開了
+    assert "有 3 列配不出" in msg
+    assert "趙瑋/綜職一/9/3(四)第1節" in msg
+    assert "周蓁妍/綜職一/9/3(四)第1節" in msg
+    assert "林冠佑/綜職一/9/3(四)第3節" in msg
+    assert "綜職二" not in msg  # 基礎雜糧加工實作那 3 節（綜職二）現在解開了
+
+
+@pytest.mark.skipif(not (_HAS_PEIDANG and _HAS_PDF), reason="找不到實體配當表或課表 PDF")
+def test_real_co_teach_file_resolves_co_swap_legs():
+    """確認解得開的那 3 節確實還原成 CoSwapLeg（teachers_a 含趙瑋、周蓁妍兩人）。"""
+    from tiaoke import timetable as tt_mod
+
+    path = r"C:\Users\lolola\Documents\GitHub\class-change\build_out\調代課單\1002-趙瑋1150903.xlsx"
+    if not os.path.exists(path):
+        pytest.skip("找不到真實範例檔 1002-趙瑋1150903.xlsx")
+
+    table = tt_mod.parse_pdf(_PDF)
+    rows = tt_mod.parse_co_teaching_xlsx(_PEIDANG)
+    tt_mod.apply_co_teaching(table, rows)
+
+    entries, meta, _note = _scan_real_sheet(path)
+    legs, unmatched = _pair_entries_for_test(entries, table)
+    co_legs = [l for l in legs if isinstance(l, CoSwapLeg) and l.klass == "綜職二"]
+    assert len(co_legs) == 3
+    for leg in co_legs:
+        assert set(leg.teachers_a) == {"趙瑋", "周蓁妍"}
+        assert leg.teachers_b == ["張宥恩"] or leg.teachers_b == ["張秉正"]
+
+
+def _scan_real_sheet(path):
+    from tiaoke.xlsx_reader import _scan
+    wb = openpyxl.load_workbook(path, data_only=True)
+    return _scan(wb.worksheets[0])
+
+
+def _pair_entries_for_test(entries, timetable):
+    from tiaoke.xlsx_reader import _pair_entries
+    return _pair_entries(entries, timetable)
 
 
 def test_missing_banner_raises_parse_error(tmp_path):

@@ -16,7 +16,7 @@ from openpyxl import Workbook, load_workbook
 
 from . import roc
 from .builder import lookup_tags
-from .models import Event, SubLeg, SwapLeg
+from .models import CoSwapLeg, Event, SubLeg, SwapLeg
 
 DETAIL_SHEET = "調代課明細"
 STATS_SHEET = "月統計"
@@ -132,6 +132,23 @@ def event_to_rows(event: Event, timetable=None, ts: str | None = None) -> list[l
                 leg.teacher_a, leg.teacher_b, "",
                 note=f"原 {roc.slot_label(leg.slot_b.date, leg.slot_b.period)}",
             ))
+        elif isinstance(leg, CoSwapLeg):
+            # A 側每位老師各一列：換到 B 側時段（slot_b）上 A 側的科目
+            a_label = "、".join(leg.teachers_a)
+            b_label = "、".join(leg.teachers_b)
+            for t in leg.teachers_a:
+                rows.append(row(
+                    "調課", leg.slot_b.date, leg.slot_b.period, leg.klass, leg.subject_a,
+                    b_label, t, "",
+                    note=f"原 {roc.slot_label(leg.slot_a.date, leg.slot_a.period)}",
+                ))
+            # B 側每位老師各一列：換到 A 側時段（slot_a）上 B 側的科目
+            for t in leg.teachers_b:
+                rows.append(row(
+                    "調課", leg.slot_a.date, leg.slot_a.period, leg.klass, leg.subject_b,
+                    a_label, t, "",
+                    note=f"原 {roc.slot_label(leg.slot_b.date, leg.slot_b.period)}",
+                ))
     return rows
 
 

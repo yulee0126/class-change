@@ -5,7 +5,7 @@ import pytest
 from tiaoke import samples
 from tiaoke import timetable as tt_mod
 from tiaoke.builder import ClassSlip, TeacherSlip, build, validate
-from tiaoke.models import Event, Slot, SubLeg, SwapLeg
+from tiaoke.models import CoSwapLeg, Event, Slot, SubLeg, SwapLeg
 
 D = datetime.date
 
@@ -186,3 +186,80 @@ def test_sheet_date_falls_back_to_sub_date():
         SubLeg("工三", "吳建勳", "食品", Slot(D(2022, 1, 19), 4), "謝欣瑜"),
     ])
     assert ev.effective_sheet_date == D(2022, 1, 19)
+
+
+# ==========================================================================
+# CoSwapLeg：協作調課（A/B 側都可能是多人協同）
+# ==========================================================================
+
+def _co_swap_ev(teachers_a, teachers_b):
+    return Event("趙瑋", "病假", "手動", D(2026, 9, 1), legs=[
+        CoSwapLeg("綜職二", teachers_a, "基礎雜糧加工實作", Slot(D(2026, 9, 3), 5),
+                 teachers_b, "物品整理實務", Slot(D(2026, 9, 1), 5)),
+    ])
+
+
+def test_co_swap_a_side_multi_teachers_each_get_own_row_target_gets_one_combined_row():
+    """對照真實案例 1002-趙瑋1150903.xlsx：張宥恩只有一列，備註合併兩人姓名。"""
+    slips = build(_co_swap_ev(["趙瑋", "周蓁妍"], ["張宥恩"]))
+
+    zhao = _teacher(slips, "趙瑋")
+    assert len(zhao.rows) == 1
+    assert zhao.rows[0].note == "與張宥恩老師 物品整理實務 調課"
+
+    zhen = _teacher(slips, "周蓁妍")
+    assert len(zhen.rows) == 1
+    assert zhen.rows[0].note == "與張宥恩老師 物品整理實務 調課"
+
+    zhang = _teacher(slips, "張宥恩")
+    assert len(zhang.rows) == 1  # 不是兩列重複
+    assert zhang.rows[0].note == "與趙瑋/周蓁妍老師 基礎雜糧加工實作 調課"
+
+    klass_rows = _klass(slips, "綜職二").rows
+    assert len(klass_rows) == 2  # 一個時段一列，不因協同人數變多
+    by_date = {r.slot.date: r for r in klass_rows}
+    assert by_date[D(2026, 9, 3)].note == "調課(原趙瑋/周蓁妍老師/基礎雜糧加工實作)"
+    assert by_date[D(2026, 9, 1)].note == "調課(原張宥恩老師/物品整理實務)"
+
+
+def test_co_swap_slip_order_requesting_teachers_first():
+    """先印出調課的（A側，協同的兩位），再印出被調課的（B側，目標老師）。"""
+    slips = build(_co_swap_ev(["趙瑋", "周蓁妍"], ["張宥恩"]))
+    teacher_names = [s.teacher for s in slips if isinstance(s, TeacherSlip)]
+    assert teacher_names == ["趙瑋", "周蓁妍", "張宥恩"]
+
+
+def test_co_swap_reversed_b_side_multi_teachers():
+    """反向：B 側（目標）才是協同班，A 側是單一老師。"""
+    slips = build(_co_swap_ev(["王小明"], ["趙瑋", "周蓁妍"]))
+
+    wang = _teacher(slips, "王小明")
+    assert len(wang.rows) == 1
+    assert wang.rows[0].note == "與趙瑋/周蓁妍老師 物品整理實務 調課"
+
+    zhao = _teacher(slips, "趙瑋")
+    assert len(zhao.rows) == 1
+    assert zhao.rows[0].note == "與王小明老師 基礎雜糧加工實作 調課"
+
+    klass_rows = _klass(slips, "綜職二").rows
+    assert len(klass_rows) == 2
+
+    teacher_names = [s.teacher for s in slips if isinstance(s, TeacherSlip)]
+    assert teacher_names == ["王小明", "趙瑋", "周蓁妍"]
+
+
+def test_co_swap_validate():
+    ok = _co_swap_ev(["趙瑋", "周蓁妍"], ["張宥恩"])
+    assert validate(ok) == []
+
+    empty_a = _co_swap_ev([], ["張宥恩"])
+    assert any("A側老師未填" in m for m in validate(empty_a))
+
+    same_teacher = _co_swap_ev(["趙瑋"], ["趙瑋"])
+    assert any("相同老師" in m for m in validate(same_teacher))
+
+    same_slot = Event("趙瑋", "病假", "手動", D(2026, 9, 1), legs=[
+        CoSwapLeg("綜職二", ["趙瑋"], "基礎雜糧加工實作", Slot(D(2026, 9, 3), 5),
+                 ["張宥恩"], "物品整理實務", Slot(D(2026, 9, 3), 5)),
+    ])
+    assert any("時段相同" in m for m in validate(same_slot))
